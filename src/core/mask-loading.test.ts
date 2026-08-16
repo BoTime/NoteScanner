@@ -1,11 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import {
   MaskLoadTracker,
+  buildImageKey,
   classifyMaskFailure,
   describePreviewEmptyState,
+  evictMaskCaches,
   parseMaskSignature,
+  planMaskDiff,
   planMaskRetry,
   shouldReportPreviewFailure,
+  type MaskRef,
 } from './mask-loading';
 
 describe('parseMaskSignature', () => {
@@ -243,3 +247,186 @@ describe('shouldReportPreviewFailure', () => {
 // describePreviewEmptyState/shouldReportPreviewFailure lives in apps/web,
 // next to that component: see
 // apps/web/src/components/post-it-images/TranscribedTextReview.preview-empty-state.test.ts
+
+describe('buildImageKey', () => {
+  it('changes when any of url, width, or height changes; stable for identical args', () => {
+    const base = { imageUrl: '/img/a.png', imageWidth: 100, imageHeight: 200 };
+    const key = buildImageKey(base);
+    expect(buildImageKey(base)).toBe(key);
+    expect(buildImageKey({ ...base, imageUrl: '/img/b.png' })).not.toBe(key);
+    expect(buildImageKey({ ...base, imageWidth: 101 })).not.toBe(key);
+    expect(buildImageKey({ ...base, imageHeight: 201 })).not.toBe(key);
+  });
+
+  it('separates its parts so a width/height digit split cannot collide', () => {
+    // The `|` is load-bearing: bare concatenation makes ('a',1,23) === ('a',12,3).
+    expect(
+      buildImageKey({ imageUrl: 'a', imageWidth: 1, imageHeight: 23 }),
+    ).not.toBe(buildImageKey({ imageUrl: 'a', imageWidth: 12, imageHeight: 3 }));
+  });
+});
+
+describe('planMaskDiff', () => {
+  const ref = (id: string, n = 1): MaskRef => ({
+    id,
+    maskUrl: `/masks/${id}-${n}`,
+  });
+  const KEY = buildImageKey({
+    imageUrl: '/img/img-1.png',
+    imageWidth: 800,
+    imageHeight: 600,
+  });
+
+  it('adding a segment reuses everything else: load=[new id] only, keep=rest, evict=[], fullReset=false', () => {
+    const prevRefs = [ref('a'), ref('b'), ref('c')];
+    const nextRefs = [ref('a'), ref('b'), ref('c'), ref('d')];
+    const plan = planMaskDiff({
+      prevImageKey: KEY,
+      nextImageKey: KEY,
+      prevRefs,
+      nextRefs,
+    });
+    expect(plan.fullReset).toBe(false);
+    expect(plan.load).toEqual([ref('d')]);
+    expect(plan.keep).toEqual(['a', 'b', 'c']);
+    expect(plan.evict).toEqual([]);
+  });
+
+  it('removing a segment evicts it: evict=[removed id], keep=rest, load=[]', () => {
+    const prevRefs = [ref('a'), ref('b'), ref('c')];
+    const nextRefs = [ref('a'), ref('c')];
+    const plan = planMaskDiff({
+      prevImageKey: KEY,
+      nextImageKey: KEY,
+      prevRefs,
+      nextRefs,
+    });
+    expect(plan.fullReset).toBe(false);
+    expect(plan.evict).toEqual(['b']);
+    expect(plan.keep).toEqual(['a', 'c']);
+    expect(plan.load).toEqual([]);
+  });
+
+  it('a changed maskUrl for an existing id lands in BOTH evict and load; others untouched', () => {
+    const prevRefs = [ref('a'), ref('b'), ref('c')];
+    const nextRefs = [ref('a'), ref('b', 2), ref('c')];
+    const plan = planMaskDiff({
+      prevImageKey: KEY,
+      nextImageKey: KEY,
+      prevRefs,
+      nextRefs,
+    });
+    expect(plan.fullReset).toBe(false);
+    expect(plan.evict).toEqual(['b']);
+    expect(plan.load).toEqual([ref('b', 2)]);
+    expect(plan.keep).toEqual(['a', 'c']);
+  });
+
+  it('an image-key change forces fullReset=true, load=all of nextRefs, regardless of overlap (imageUrl changing)', () => {
+    const prevRefs = [ref('a'), ref('b')];
+    const nextRefs = [ref('a'), ref('b')]; // identical refs, only the url differs
+    const prevKey = buildImageKey({
+      imageUrl: '/img/img-1.png',
+      imageWidth: 800,
+      imageHeight: 600,
+    });
+    const nextKey = buildImageKey({
+      imageUrl: '/img/img-2.png',
+      imageWidth: 800,
+      imageHeight: 600,
+    });
+    const plan = planMaskDiff({
+      prevImageKey: prevKey,
+      nextImageKey: nextKey,
+      prevRefs,
+      nextRefs,
+    });
+    expect(plan.fullReset).toBe(true);
+    expect(plan.load).toEqual(nextRefs);
+    expect(plan.keep).toEqual([]);
+    expect(plan.evict).toEqual([]);
+  });
+
+  it('an image-key change forces fullReset=true when only width/height change with an unchanged url', () => {
+    const prevRefs = [ref('a'), ref('b')];
+    const nextRefs = [ref('a'), ref('b')];
+    const prevKey = buildImageKey({
+      imageUrl: '/img/img-1.png',
+      imageWidth: 800,
+      imageHeight: 600,
+    });
+    const nextKey = buildImageKey({
+      imageUrl: '/img/img-1.png',
+      imageWidth: 801,
+      imageHeight: 600,
+    });
+    const plan = planMaskDiff({
+      prevImageKey: prevKey,
+      nextImageKey: nextKey,
+      prevRefs,
+      nextRefs,
+    });
+    expect(plan.fullReset).toBe(true);
+    expect(plan.load).toEqual(nextRefs);
+    expect(plan.keep).toEqual([]);
+    expect(plan.evict).toEqual([]);
+  });
+
+  it('first run (prevImageKey: null) forces fullReset=true, everything in load', () => {
+    const nextRefs = [ref('a'), ref('b'), ref('c')];
+    const plan = planMaskDiff({
+      prevImageKey: null,
+      nextImageKey: KEY,
+      prevRefs: [],
+      nextRefs,
+    });
+    expect(plan.fullReset).toBe(true);
+    expect(plan.load).toEqual(nextRefs);
+    expect(plan.keep).toEqual([]);
+    expect(plan.evict).toEqual([]);
+  });
+
+  it('retry path: identical prev/next refs and key -> fullReset=false, keep=everything, load=[], evict=[]', () => {
+    const refs = [ref('a'), ref('b'), ref('c')];
+    const plan = planMaskDiff({
+      prevImageKey: KEY,
+      nextImageKey: KEY,
+      prevRefs: refs,
+      nextRefs: refs,
+    });
+    expect(plan.fullReset).toBe(false);
+    expect(plan.keep).toEqual(['a', 'b', 'c']);
+    expect(plan.load).toEqual([]);
+    expect(plan.evict).toEqual([]);
+  });
+});
+
+describe('evictMaskCaches', () => {
+  it('removes the id from both maps, leaves other ids untouched, and no-ops for an unknown id', () => {
+    const mapA = new Map<string, unknown>([
+      ['a', 1],
+      ['b', 2],
+      ['c', 3],
+    ]);
+    const mapB = new Map<string, unknown>([
+      ['a', 'x'],
+      ['b', 'y'],
+      ['c', 'z'],
+    ]);
+
+    evictMaskCaches('b', [mapA, mapB]);
+
+    expect(mapA.has('b')).toBe(false);
+    expect(mapB.has('b')).toBe(false);
+    expect(mapA.get('a')).toBe(1);
+    expect(mapA.get('c')).toBe(3);
+    expect(mapB.get('a')).toBe('x');
+    expect(mapB.get('c')).toBe('z');
+    expect(mapA.size).toBe(2);
+    expect(mapB.size).toBe(2);
+
+    expect(() => evictMaskCaches('nope', [mapA, mapB])).not.toThrow();
+    expect(mapA.size).toBe(2);
+    expect(mapB.size).toBe(2);
+  });
+});

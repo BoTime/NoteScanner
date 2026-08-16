@@ -5,6 +5,7 @@ import {
   buildOutlineImageData,
   countsToImageData,
   coverageToIndices,
+  evictMaskCaches,
   resolveAppliedDelta,
   type OutlineRgb,
 } from '../core';
@@ -234,6 +235,10 @@ export function createCanvas2DRenderer(): Renderer {
       canvas = null;
       ctx = null;
       dim = null;
+    },
+    evict(ids) {
+      const caches: ReadonlyArray<Map<string, unknown>> = [covIdxCache, edgeIdxCache];
+      for (const id of ids) evictMaskCaches(id, caches);
     },
   };
 }

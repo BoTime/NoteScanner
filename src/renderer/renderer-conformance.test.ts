@@ -94,4 +94,56 @@ describe('Renderer conformance: Canvas2DRenderer', () => {
     r.draw(scene({ draftPoints: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }] }));
     expect(ctx.stroke).toHaveBeenCalled();
   });
+
+  it('evict() with an unknown id is a no-op, not a throw', () => {
+    const r = createCanvas2DRenderer();
+    // Assert the method actually exists (not just that optional chaining
+    // silently no-ops on an absent method) so this fails for the right
+    // reason — a missing `evict` — before it is implemented.
+    expect(typeof r.evict).toBe('function');
+    expect(() => r.evict?.(['nope'])).not.toThrow();
+  });
+
+  it('evict() is callable with empty/duplicate ids and does not disturb a subsequent draw()', () => {
+    // The strong version of this test — draw with `a` selected and loaded,
+    // evict it, draw again with a different coverage for the same id, and
+    // assert the second draw recomputed rather than reused stale indices —
+    // is infeasible in this environment. Populating covIdxCache/edgeIdxCache
+    // only happens inside `rebuildSelectedLayers`'s `for (const id of added)`
+    // loop, which runs only when `draw()` is called with a *loaded, selected*
+    // id; that function is async and, for any non-empty selection, always
+    // proceeds to `countsToImageData` (needs `ImageData`) and then
+    // `createImageBitmap` — neither implemented by jsdom (confirmed
+    // experimentally: both are undefined in this environment, and reaching
+    // either produces an *unhandled rejection* that fails the whole suite,
+    // not just this test, since `draw()` fires the async work as
+    // `void rebuildSelectedLayers(scene)`). Stubbing both globals was tried
+    // and works mechanically, but even then the cached `Uint32Array` indices
+    // never leave the renderer's closure and `fakeCtx()`'s `drawImage` mock
+    // only records that a bitmap was drawn, not its content — so
+    // recomputation-vs-reuse still wouldn't be observable through this public
+    // surface, and the extra stubbing would only be adding incidental
+    // complexity. The correctness guarantee itself — evicting an id removes
+    // it from both index caches, leaving others untouched — is already
+    // covered directly by `evictMaskCaches`'s own test in
+    // core/mask-loading.test.ts (Task 1), which is the tested primitive
+    // `evict()` below calls. Here we assert the weaker, still meaningful
+    // properties the plan allows as a fallback: evict is present, tolerates
+    // empty/duplicate/unknown ids without throwing, and does not disturb a
+    // subsequent draw() (using an empty selection, which stays on the
+    // synchronous/no-bitmap path, matching every other `draw()` call already
+    // in this file).
+    const { canvas, ctx } = fakeCanvas();
+    const r = createCanvas2DRenderer();
+    r.init(canvas);
+    r.draw(scene());
+
+    expect(typeof r.evict).toBe('function');
+    expect(() => r.evict?.([])).not.toThrow();
+    expect(() => r.evict?.(['a'])).not.toThrow();
+    expect(() => r.evict?.(['a', 'a', 'unknown'])).not.toThrow();
+
+    expect(() => r.draw(scene())).not.toThrow();
+    expect(ctx.drawImage).toHaveBeenCalled();
+  });
 });

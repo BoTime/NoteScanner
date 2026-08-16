@@ -22,6 +22,7 @@ import {
   PAN_THRESHOLD,
   MaskLoadTracker,
   applyMenuAction,
+  buildImageKey,
   buildSegmentMenuItems,
   canReuseBaseImage,
   classifyMaskFailure,
@@ -32,6 +33,7 @@ import {
   isTypingTarget,
   panModeForZoomCrossing,
   parseMaskSignature,
+  planMaskDiff,
   planMaskRetry,
   resolveCursor,
   resolveViewerStatus,
@@ -43,6 +45,7 @@ import {
   zoomAt,
   type CursorMode,
   type MaskError,
+  type MaskRef,
   type SegmentMaskData,
   type SegmentMenuAction,
   type ViewTransform,
@@ -124,6 +127,28 @@ export function SegmentViewer({
     null,
   );
   const masksRef = useRef<Map<string, LoadedMask>>(new Map());
+  // The previous run's mask refs and image identity. REFS, not state or deps:
+  // the load effect's dep array must stay exactly
+  // [imageUrl, imageWidth, imageHeight, maskSignature, maskRetryNonce], and
+  // refs add no deps — that is precisely why they are refs.
+  const prevMaskRefsRef = useRef<MaskRef[]>([]);
+  const prevImageKeyRef = useRef<string | null>(null);
+  // Ids that were still failing when the last load() run finished. A manual
+  // retry bumps `maskRetryNonce` only — the image key and the ref list are
+  // unchanged, so planMaskDiff correctly reports a no-op diff (keep =
+  // everything, load = []). The effect layers these ids back on top of
+  // `plan.load` to form the batch it actually fetches, so a retry re-attempts
+  // exactly what failed and never re-requests an already-decoded mask.
+  // Rewritten at the end of every load() run; cleared by tearDownMaskState.
+  const lastFailedRefsRef = useRef<MaskRef[]>([]);
+  // True once a frame has actually been painted for the CURRENT image key. It
+  // is what lets the render gate keep the canvas up through an incremental
+  // (same image) mask reload instead of swapping the whole board for a
+  // spinner. Cleared by tearDownMaskState, so a genuinely new image still
+  // shows the placeholder from scratch — no separate "is this still the same
+  // image" check is needed, because tearDownMaskState runs exactly on a
+  // fullReset (an image-key change) and on unmount.
+  const hasReadyFrameRef = useRef(false);
   // Held in a ref so a parent recreating the callback each render cannot
   // restart the mask pipeline — the load effect must key ONLY on
   // [imageUrl, imageWidth, imageHeight, maskSignature].
@@ -203,24 +228,112 @@ export function SegmentViewer({
     [segments],
   );
 
+  // Full teardown of every decoded-mask-derived ref. Called on unmount, and on
+  // the `fullReset` path inside the effect body — NOT unconditionally in the
+  // effect's cleanup, because cleanup runs before every re-run and would
+  // otherwise destroy the very entries the diff path exists to preserve.
+  // A new per-mask cache must be added here, not to the effect cleanup.
+  const tearDownMaskState = useCallback(() => {
+    baseImageRef.current = null;
+    masksRef.current = new Map();
+    // `dispose()` releases the renderer's cached bitmaps and per-id index
+    // caches so the next image rebuilds from scratch against its own masks
+    // (different segment ids and dimensions). Documented idempotent.
+    rendererRef.current?.dispose();
+    prevMaskRefsRef.current = [];
+    prevImageKeyRef.current = null;
+    lastFailedRefsRef.current = [];
+    hasReadyFrameRef.current = false;
+  }, []);
+
+  // Unmount teardown, and ONLY unmount: the load effect's own cleanup fires on
+  // every re-run, so dropping every mask ref and disposing the renderer lives
+  // here instead, where it happens exactly once when the component goes away.
+  useEffect(() => () => tearDownMaskState(), [tearDownMaskState]);
+
   useEffect(() => {
     let cancelled = false;
+    // Decide what this run must do BEFORE touching any state: which masks
+    // survive, which must be refetched, and which must be thrown away.
+    const nextImageKey = buildImageKey({ imageUrl, imageWidth, imageHeight });
+    // Read the mask list from the SIGNATURE, not the `segments` prop: the
+    // effect must stay provably independent of the array.
+    const refs = parseMaskSignature(maskSignature);
+    const plan = planMaskDiff({
+      prevImageKey: prevImageKeyRef.current,
+      nextImageKey,
+      prevRefs: prevMaskRefsRef.current,
+      nextRefs: refs,
+    });
+
+    // The batch this run actually fetches. `plan.load` covers what the SIGNATURE
+    // says is new or changed; a retry-nonce bump changes neither the signature
+    // nor the image key, so plan.load is empty by design and the ids that failed
+    // last time have to be layered back on here — otherwise the retry button
+    // would re-run the effect and immediately no-op.
+    //   - matched by id against the CURRENT refs, so the retry uses the freshest
+    //     maskUrl (a 403 refresh may have replaced it) rather than the stale one;
+    //   - a failed id that has since vanished from the signature is dropped, not
+    //     force-loaded;
+    //   - on fullReset nothing carries over: tearDownMaskState has already
+    //     cleared the failed list and plan.load is the whole board anyway.
+    const failedStillPresent = plan.fullReset
+      ? []
+      : lastFailedRefsRef.current.flatMap((failed) => {
+          const current = refs.find((r) => r.id === failed.id);
+          if (!current) return [];
+          return plan.load.some((l) => l.id === current.id) ? [] : [current];
+        });
+    const refsToLoad = [...plan.load, ...failedStillPresent];
+
+    if (plan.fullReset) {
+      // A different image (url OR dimensions), or the very first run. Nothing
+      // decoded against the old image may survive: every `coverage` array is
+      // sized to the old imageWidth*imageHeight and every renderer index cache
+      // is keyed by a segment id that may not even belong to this image.
+      tearDownMaskState();
+    } else {
+      // Diff path — same image, changed signature or a retry nonce bump. Keep
+      // the surviving decoded masks AS THE SAME OBJECT REFERENCES; only drop
+      // what the plan says to drop. The renderer's per-id caches must be
+      // evicted alongside `masksRef`: they are keyed by id alone and are
+      // consulted BEFORE `scene.masks`, so a survivor would otherwise paint old
+      // geometry against a new mask.
+      for (const id of plan.evict) masksRef.current.delete(id);
+      rendererRef.current?.evict?.(plan.evict);
+    }
+
     // A retry re-runs PHASE 2 only: the base image for THIS url already
     // decoded, so re-fetching a multi-megabyte photo would be pure waste, and
-    // reusing it means the canvas can draw the instant the masks land.
+    // reusing it means the canvas can draw the instant the masks land. Assigned
+    // AFTER the branch above: `tearDownMaskState` nulls `baseImageRef`.
     const cache = baseImageCacheRef.current;
     const cachedBase = canReuseBaseImage(cache?.url, imageUrl)
       ? (cache?.img ?? null)
       : null;
     baseImageRef.current = cachedBase;
-    masksRef.current = new Map();
-    // Reset SYNCHRONOUSLY, not inside `load()` after its await: masks for the
-    // previous signature are already discarded above, so leaving `masksReady`
-    // true even for one microtask would report 'ready' and reveal a board whose
-    // masks are gone.
+    prevImageKeyRef.current = nextImageKey;
+    prevMaskRefsRef.current = refs;
+
+    // Reset SYNCHRONOUSLY, not inside `load()` after its await. On the
+    // fullReset path the previous masks are already gone above, so leaving
+    // `masksReady` true even for one microtask would report 'ready' and reveal
+    // a board whose masks are discarded. On the diff path the survivors are NOT
+    // discarded, but a freshly drawn segment is auto-selected by the host and
+    // would highlight blank — so readiness still drops until the new batch
+    // settles. (resolveAppliedDelta handles that selected-but-not-yet-loaded
+    // window.)
     setMasksReady(false);
     setMaskError(null);
-    setMasksList([]);
+    // The hit-test list must end up holding ALL live masks, so on the diff path
+    // it is seeded from the survivors rather than emptied.
+    const survivors: SegmentMaskData[] = plan.fullReset
+      ? []
+      : plan.keep.flatMap((id) => {
+          const mask = masksRef.current.get(id);
+          return mask ? [{ id, coverage: mask.coverage, area: mask.area }] : [];
+        });
+    setMasksList(survivors);
     // Same reasoning for the base image: a new url means the old decode is
     // gone, so `loaded` must drop before any await can let a render through.
     if (!cachedBase) {
@@ -246,17 +359,18 @@ export function SegmentViewer({
           setLoaded(true);
         }
 
-        // PHASE 2 — masks, in the background, independently. Read the mask list
-        // from the SIGNATURE, not the `segments` prop: the effect must stay
-        // provably independent of the array.
-        const refs = parseMaskSignature(maskSignature);
-        if (refs.length === 0) {
+        // PHASE 2 — masks, in the background, independently. Only `refsToLoad`
+        // is fetched: the `plan.keep` masks are already decoded and are reused
+        // as the same object references. This single check also covers an image
+        // with zero segments — nothing to load means the board is ready now.
+        if (refsToLoad.length === 0) {
           setMasksReady(true);
           return;
         }
 
-        const map = new Map<string, LoadedMask>();
-        const hitMasks: SegmentMaskData[] = [];
+        // The accumulator starts from the survivors so the hit-test list ends
+        // up holding ALL live masks, not just the newly decoded ones.
+        const hitMasks: SegmentMaskData[] = [...survivors];
 
         // Load one batch of masks independently, recording each outcome on
         // `tracker`. Returns once every ref in the batch has settled. Never
@@ -272,14 +386,16 @@ export function SegmentViewer({
                 const img = await loadImage(ref.maskUrl);
                 if (cancelled) return;
                 const mask = buildMaskData(img, imageWidth, imageHeight);
-                map.set(ref.id, mask);
+                // Mutate the LIVE map rather than building a fresh one and
+                // swapping it in: the survivors must stay in place as the same
+                // entries.
+                masksRef.current.set(ref.id, mask);
                 hitMasks.push({
                   id: ref.id,
                   coverage: mask.coverage,
                   area: mask.area,
                 });
                 tracker.succeed(ref.id);
-                masksRef.current = map;
                 setMasksList([...hitMasks]);
               } catch (err) {
                 if (cancelled) return;
@@ -289,8 +405,8 @@ export function SegmentViewer({
           );
         }
 
-        const tracker = new MaskLoadTracker(refs.map((r) => r.id));
-        await loadBatch(refs, tracker);
+        const tracker = new MaskLoadTracker(refsToLoad.map((r) => r.id));
+        await loadBatch(refsToLoad, tracker);
         if (cancelled) return;
 
         // A presigned URL has a 300s TTL, so a page left open can 403 on a mask
@@ -324,10 +440,20 @@ export function SegmentViewer({
           }
         }
 
+        // Remember what is still broken so the retry button's next run knows
+        // what to re-attempt (see `lastFailedRefsRef`). Recorded from
+        // `refsToLoad`, the batch actually attempted, and rewritten on every
+        // completed run — so a successful retry leaves it empty.
+        lastFailedRefsRef.current = refsToLoad.filter((r) =>
+          failures.some((f) => f.id === r.id),
+        );
+
         // A partially-masked image is never shown: any surviving failure is a
         // terminal (retryable) error, not a warning painted over the canvas.
+        // `total` is the size of the batch actually attempted, not the whole
+        // board — on a retry only the previously-failed masks are in flight.
         if (failures.length > 0) {
-          setMaskError({ failed: failures.length, total: refs.length });
+          setMaskError({ failed: failures.length, total: refsToLoad.length });
         }
         setMasksReady(true);
       } catch (err) {
@@ -339,21 +465,26 @@ export function SegmentViewer({
     }
     void load();
     return () => {
+      // ONLY the cancel flag. React runs cleanup before EVERY re-run, not just
+      // unmount, so wiping `baseImageRef` / `masksRef` / the renderer here would
+      // destroy exactly the decoded entries the diff path exists to preserve —
+      // this deletion looks reversible and is not. The full teardown now lives
+      // in the `fullReset` branch above (image identity actually changed) and in
+      // the unmount effect (component actually going away).
       cancelled = true;
-      // Drop refs so masks become GC-eligible, and release the renderer's
-      // cached bitmaps so the next image rebuilds from scratch against its own
-      // masks (different segment ids and dimensions).
-      baseImageRef.current = null;
-      masksRef.current = new Map();
-      rendererRef.current?.dispose();
     };
     // Key on the mask signature, not the full `segments` array: the effect only
     // reads `s.id`/`s.maskUrl` (via parseMaskSignature), so it must not re-run
     // when unrelated per-segment fields change. See `maskSignature` above.
     // `maskRetryNonce` is a plain counter bumped only by the retry button — it
     // is NOT derived from `segments`, so it cannot reintroduce the per-segment
-    // coupling. This list is exhaustive as written; nothing may be added that
-    // varies per segment.
+    // coupling. This list is UNCHANGED by the incremental diff work and is
+    // exhaustive as written; nothing may be added that varies per segment.
+    // `prevMaskRefsRef` / `prevImageKeyRef` / `lastFailedRefsRef` carry this
+    // effect's cross-run state and are refs precisely so they cannot appear
+    // here; `tearDownMaskState` is a stable empty-dep useCallback, likewise
+    // deliberately absent.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imageUrl, imageWidth, imageHeight, maskSignature, maskRetryNonce]);
 
   // The single readiness signal the host gates the whole card on. Derived, not
@@ -411,18 +542,32 @@ export function SegmentViewer({
     rendererRef.current?.draw(scene);
   }, [buildScene]);
 
-  useEffect(() => () => rendererRef.current?.dispose(), []);
-
-  // This gates on `ready`, not `loaded`: the <canvas> is not mounted until the
-  // card is revealed, so a draw fired at `loaded` would hit a null ref and
-  // never re-fire — the board would come up blank. `ready` flips exactly when
-  // the canvas mounts, and drawing then is safe because every mask is decoded.
-  const ready = status === 'ready';
+  // Mirrors the render gate below: whenever the <canvas> is actually on
+  // screen, drawing is safe. Before the incremental-reload fix this was just
+  // `status === 'ready'`, because the canvas was not mounted until then — a
+  // draw fired earlier would hit a null ref and never re-fire. Now the canvas
+  // can also be mounted on a same-image diff-path reload (hasReadyFrameRef),
+  // so the gate widens to match. Keep `canPaint` and the render gate's
+  // `showPlaceholder` derived from the same two inputs (status,
+  // hasReadyFrameRef) so a future edit cannot drift them apart — a `canPaint`
+  // that is true while the placeholder is showing would draw to a null ref.
+  const canPaint =
+    status === 'ready' || (status !== 'error' && hasReadyFrameRef.current);
 
   useEffect(() => {
-    if (!ready) return;
+    if (!canPaint) return;
     drawFrame();
-  }, [ready, drawFrame]);
+    hasReadyFrameRef.current = true;
+    // `masksList` is not read directly by `drawFrame` (it reads `masksRef`,
+    // a ref), but it gets a new array reference on every successful mask
+    // decode — so including it here is what makes a diff-path decode
+    // actually trigger a repaint. Without it, `buildScene`'s deps
+    // ([imageWidth, imageHeight, selectedIds, hoveredId, draftPoints]) never
+    // change when a mask lands, `drawFrame` keeps its identity, and this
+    // effect would not re-run: a newly drawn, auto-selected segment would
+    // stay unhighlighted indefinitely instead of briefly. Must NOT be added
+    // to the mask-load effect's own dep array — that array stays pinned.
+  }, [canPaint, drawFrame, masksList]);
 
   function eventToImagePoint(
     e: React.MouseEvent<HTMLCanvasElement>,
@@ -685,9 +830,20 @@ export function SegmentViewer({
     aspectRatio: `${imageWidth} / ${imageHeight}`,
   } as const;
 
-  // Nothing of the board is revealed until every mask has drawn: a base image
-  // with no overlay is indistinguishable from "segmentation found nothing".
-  if (status !== 'ready') {
+  // Nothing of the board is revealed until every mask has drawn on the FIRST
+  // load: a base image with no overlay is indistinguishable from
+  // "segmentation found nothing". But a same-image incremental reload (e.g.
+  // adding one segment) keeps the board up instead: every previously decoded
+  // mask is still valid and paintable, and swapping the canvas for a spinner
+  // unmounts it — which is what made that flash visible rather than a
+  // sub-frame blip. An error ALWAYS takes this branch regardless of
+  // `hasReadyFrameRef`: the retry button lives here, and a mask failure is
+  // terminal-but-recoverable by design (see viewer-status.ts). Note
+  // `resolveViewerStatus` and the reported `status` are UNCHANGED by this —
+  // only what this component renders while loading a same-image batch.
+  const showPlaceholder =
+    status === 'error' || (status !== 'ready' && !hasReadyFrameRef.current);
+  if (showPlaceholder) {
     return (
       <div ref={wrapperRef} className={rootClassName}>
         <div

@@ -33,6 +33,21 @@ export interface Renderer {
   resize(scene: Scene): void;
   /** Release GPU/bitmap resources. Safe to call twice. */
   dispose(): void;
+  /**
+   * Drop per-mask cached geometry for these ids. Safe to call with unknown ids.
+   *
+   * Optional on purpose: `renderer?: RendererFactory` is public package API, so
+   * a third-party renderer must not break on a minor upgrade just because this
+   * method was added. Callers must use `rendererRef.current?.evict?.(ids)`.
+   *
+   * Scope: clears derived per-id geometry ONLY (e.g. cached coverage/edge
+   * index arrays) — never count buffers or `prevSelected`. `resolveAppliedDelta`'s
+   * `removed` branch already subtracts an id's contribution from those when it
+   * drops out of `scene.selectedIds`; subtracting again here would double-count
+   * and drive the `Uint16Array` counts negative, underflowing to ~65535 and
+   * permanently brightening those pixels.
+   */
+  evict?(ids: readonly string[]): void;
 }
 
 export type RendererFactory = () => Renderer;
