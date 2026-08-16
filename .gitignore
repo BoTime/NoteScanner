@@ -1,0 +1,8 @@
+dist
+node_modules
+
+# Scratch file holding the dev `exports` map while `npm pack`/`npm publish` runs
+# (written by scripts/prepack-exports.mjs, removed by scripts/postpack-exports.mjs)
+.exports-dev-backup.json
+# Tarballs produced by `npm pack`
+*.tgz

@@ -1,0 +1,78 @@
+{
+  "name": "@sambacollab/segment-viewer",
+  "version": "0.1.0",
+  "description": "Canvas segment/mask viewer for React",
+  "license": "UNLICENSED",
+  "type": "module",
+  "sideEffects": ["*.css"],
+  "files": ["dist"],
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "development": "./src/index.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "development": "./src/core/index.ts",
+      "import": "./dist/core/index.js",
+      "require": "./dist/core/index.cjs"
+    },
+    "./styles.css": "./src/styles.css",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "require": "./dist/index.cjs"
+      },
+      "./core": {
+        "types": "./dist/core/index.d.ts",
+        "import": "./dist/core/index.js",
+        "require": "./dist/core/index.cjs"
+      },
+      "./styles.css": "./dist/segment-viewer.css",
+      "./package.json": "./package.json"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SambaCollab/samba.git",
+    "directory": "packages/segment-viewer"
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "playground": "vite --config playground/vite.config.ts",
+    "smoke": "npm run build && node scripts/smoke-build.mjs",
+    "prepublishOnly": "npm run build",
+    "prepack": "node scripts/prepack-exports.mjs",
+    "postpack": "node scripts/postpack-exports.mjs"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18"
+  },
+  "devDependencies": {
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^5.0.0",
+    "jsdom": "^25.0.0",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "tsup": "^8.5.0",
+    "typescript": "^5",
+    "vite": "^7.0.0",
+    "vitest": "^3.2.0"
+  }
+}
