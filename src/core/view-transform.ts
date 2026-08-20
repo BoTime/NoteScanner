@@ -70,21 +70,36 @@ export function screenToImage(
   screenX: number,
   screenY: number,
   t: ViewTransform,
-  frameRect: { left: number; top: number; width: number; height: number },
+  canvasRect: { left: number; top: number; width: number; height: number },
   imageW: number,
   imageH: number,
 ): { x: number; y: number } {
-  // 1. Frame-relative CSS px.
-  const fx = screenX - frameRect.left;
-  const fy = screenY - frameRect.top;
+  // `canvasRect` is the <canvas>'s own UNTRANSFORMED layout box in screen
+  // coordinates, NOT the frame's box.
+  //
+  // Why not the frame: the canvas sizes itself with the "replaced element
+  // contain" pattern (max-width/max-height/width:auto/height:auto +
+  // aspect-ratio), so whenever the frame's aspect ratio differs from the
+  // image's, the canvas is strictly smaller than the frame on one axis. Canvas
+  // CSS px != frame CSS px in general, and the boxes' origins can differ too,
+  // so measuring the frame here maps clicks to the wrong image pixels.
+  //
+  // Why untransformed: the steps below undo the canvas's CSS transform
+  // analytically. `getBoundingClientRect()` on the canvas reports the box with
+  // that transform ALREADY applied, so feeding it in raw would double-count
+  // both the translate and the scale. Callers must un-apply the transform when
+  // measuring (see `canvasLayoutRect` in SegmentViewer.tsx).
+  //
+  // 1. Canvas-relative CSS px.
+  const fx = screenX - canvasRect.left;
+  const fy = screenY - canvasRect.top;
   // 2. Undo the canvas transform (translate then scale, origin 0,0) -> canvas
-  //    CSS px. The canvas is width:100%/height:100% of the frame, so canvas CSS
-  //    px == frame CSS px before the transform.
+  //    CSS px.
   const cx = (fx - t.offsetX) / t.scale;
   const cy = (fy - t.offsetY) / t.scale;
-  // 3. Canvas CSS px -> image px using the frame's unscaled size.
+  // 3. Canvas CSS px -> image px using the canvas's unscaled size.
   return {
-    x: cx * (imageW / frameRect.width),
-    y: cy * (imageH / frameRect.height),
+    x: cx * (imageW / canvasRect.width),
+    y: cy * (imageH / canvasRect.height),
   };
 }

@@ -108,10 +108,41 @@ describe('zoomAt', () => {
 });
 
 describe('screenToImage', () => {
-  // Frame is 200x100 CSS px at screen origin (left/top = 0); image is 400x200 px.
+  // Canvas is 200x100 CSS px at screen origin (left/top = 0); image is 400x200 px.
   const frameRect = { left: 0, top: 0, width: 200, height: 100 };
   const imageW = 400;
   const imageH = 200;
+
+  // Regression guard for the frame-vs-canvas mix-up: the canvas contain-fits
+  // itself inside the frame, so when their aspect ratios differ the canvas is
+  // letterboxed and is NOT the frame's box. Passing the frame's rect (the old
+  // behaviour) mapped clicks to the wrong image pixels.
+  it('maps using the canvas box, not the enclosing frame box', () => {
+    const t: ViewTransform = { scale: 1, offsetX: 0, offsetY: 0 };
+    // Frame is 200x200 but the image is 2:1, so the canvas contain-fits to
+    // 200x100 and sits 50px down from the frame's top (centred vertically).
+    const canvasRect = { left: 0, top: 50, width: 200, height: 100 };
+    // A click at the canvas's own centre must be the image's centre.
+    const atCanvasCentre = screenToImage(100, 100, t, canvasRect, imageW, imageH);
+    expect(atCanvasCentre).toEqual({ x: 200, y: 100 });
+
+    // The frame's centre (y=100 within a 200-tall frame at top 0) is the SAME
+    // screen point here, but measuring the frame would have called it the image
+    // centre for the wrong reason and, crucially, disagrees everywhere else:
+    // the canvas's top edge (y=50) is image y=0, not the frame-based y=50.
+    const atCanvasTop = screenToImage(0, 50, t, canvasRect, imageW, imageH);
+    expect(atCanvasTop).toEqual({ x: 0, y: 0 });
+
+    const frameBased = screenToImage(
+      0,
+      50,
+      t,
+      { left: 0, top: 0, width: 200, height: 200 },
+      imageW,
+      imageH,
+    );
+    expect(frameBased).not.toEqual(atCanvasTop);
+  });
 
   it('maps frame px to image px at scale 1 (matches the old inline math)', () => {
     const t: ViewTransform = { scale: 1, offsetX: 0, offsetY: 0 };

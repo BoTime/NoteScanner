@@ -81,7 +81,16 @@
 .sv-error-icon { color: #dc2626; }
 .sv-error-inline { margin-bottom: 0.5rem; }
 
-.sv-frame { position: relative; overflow: hidden; }
+.sv-frame {
+  position: relative;
+  overflow: hidden;
+  /* The canvas contain-fits itself (max-width/max-height + aspect-ratio) and
+     is often narrower than the frame on one axis — center it so it doesn't
+     sit flush against the frame's left/top edge. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 .sv-canvas {
   border: 1px solid var(--sv-border);
   border-radius: 0.375rem;

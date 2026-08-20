@@ -192,7 +192,6 @@ export function SegmentViewer({
   const [drawMode, setDrawMode] = useState(false);
   const [draftPoints, setDraftPoints] = useState<Point[]>([]);
   const [creatingSegment, setCreatingSegment] = useState(false);
-  const frameRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<ViewTransform>({
     scale: 1,
     offsetX: 0,
@@ -569,12 +568,43 @@ export function SegmentViewer({
     // to the mask-load effect's own dep array — that array stays pinned.
   }, [canPaint, drawFrame, masksList]);
 
+  // The canvas's UNTRANSFORMED layout box, in screen coordinates.
+  //
+  // Every coordinate/zoom/pan calculation must measure the canvas, not the
+  // frame: the canvas contain-fits itself inside the frame via
+  // max-width/max-height + aspect-ratio, so it is smaller than the frame on one
+  // axis whenever the two aspect ratios differ (the frame is a pure outer
+  // bound). Measuring the frame would map clicks to the wrong image pixels and
+  // give pan/zoom the wrong extents.
+  //
+  // getBoundingClientRect() reports the box with the CSS transform
+  // (`translate(offset) scale(scale)`, transform-origin 0 0) already applied,
+  // so it is un-applied here: origin 0 0 means the scale pins the top-left, and
+  // the translate shifts it, so layoutLeft = rect.left - offsetX and
+  // layoutWidth = rect.width / scale.
+  function canvasLayoutRect(): {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } | null {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return null;
+    return {
+      left: rect.left - view.offsetX,
+      top: rect.top - view.offsetY,
+      width: rect.width / view.scale,
+      height: rect.height / view.scale,
+    };
+  }
+
   function eventToImagePoint(
     e: React.MouseEvent<HTMLCanvasElement>,
   ): Point | null {
-    const frame = frameRef.current;
-    if (!frame) return null;
-    const rect = frame.getBoundingClientRect();
+    const rect = canvasLayoutRect();
+    if (!rect) return null;
     return screenToImage(
       e.clientX,
       e.clientY,
@@ -676,10 +706,13 @@ export function SegmentViewer({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [cancelDrawing, drawMode]);
 
-  function frameSize(): { w: number; h: number } | null {
-    const frame = frameRef.current;
-    if (!frame) return null;
-    const rect = frame.getBoundingClientRect();
+  // Named for the transform's frame of reference, which is the CANVAS's own
+  // unscaled box — `clampTransform`/`zoomAt` bound the transform applied to the
+  // canvas element, so feeding them the (potentially larger) outer frame box
+  // would let the image pan past its own edges and zoom about the wrong centre.
+  function canvasSize(): { w: number; h: number } | null {
+    const rect = canvasLayoutRect();
+    if (!rect) return null;
     return { w: rect.width, h: rect.height };
   }
 
@@ -713,7 +746,7 @@ export function SegmentViewer({
     const dx = e.clientX - pan.startX;
     const dy = e.clientY - pan.startY;
     if (!pan.moved && Math.hypot(dx, dy) > PAN_THRESHOLD) pan.moved = true;
-    const size = frameSize();
+    const size = canvasSize();
     if (!size) return;
     setView((v) =>
       clampTransform(
@@ -737,7 +770,7 @@ export function SegmentViewer({
   }
 
   function zoomByFactor(factor: number) {
-    const size = frameSize();
+    const size = canvasSize();
     if (!size) return;
     setView((v) => zoomAt(v, factor, size.w / 2, size.h / 2, size.w, size.h));
   }
@@ -821,13 +854,19 @@ export function SegmentViewer({
   const rootClassName = ['sv-root', className].filter(Boolean).join(' ');
 
   // Same box as the real canvas frame, so swapping placeholder → content does
-  // not move anything below it. `aspectRatio` + `maxHeight` mirror the frame
-  // exactly; without this the card would jump by the height of the image.
+  // not move anything below it: `.sv-status` and `.sv-frame` share this object,
+  // so both reserve identical width/maxWidth/maxHeight and the card never jumps
+  // on load.
+  //
+  // The frame is now a pure OUTER BOUND — it deliberately carries no
+  // `aspectRatio`. The canvas independently derives its own ratio-correct box
+  // within it (max-width/max-height + aspect-ratio, below), which is what keeps
+  // the image from being squished when the frame's ratio differs from the
+  // image's. `maxHeight` is reused verbatim on the canvas so the two agree.
   const frameBoxStyle = {
     width: '100%',
     maxWidth: '100%',
     maxHeight,
-    aspectRatio: `${imageWidth} / ${imageHeight}`,
   } as const;
 
   // Nothing of the board is revealed until every mask has drawn on the FIRST
@@ -946,7 +985,6 @@ export function SegmentViewer({
         </div>
       </div>
       <div
-        ref={frameRef}
         className="sv-frame"
         // Shared with the loading/error placeholder so the swap is layout-neutral.
         style={frameBoxStyle}
@@ -961,8 +999,20 @@ export function SegmentViewer({
           onMouseLeave={handleMouseUp}
           onContextMenu={handleContextMenu}
           style={{
-            width: '100%',
-            height: '100%',
+            maxWidth: '100%',
+            // NOT '100%': a percentage max-height resolves against the parent's
+            // own height, and `.sv-frame` has no definite height (its only
+            // height constraint is this same `maxHeight` cap, and a cap is not
+            // a definite height). Per spec the percentage would resolve to
+            // `none`, letting the canvas grow past the frame — whose
+            // `overflow: hidden` would then silently CLIP a tall image instead
+            // of scaling it down to fit. Reusing `frameBoxStyle`'s concrete
+            // `maxHeight` bounds the canvas for real and keeps the two boxes
+            // agreeing on the same limit.
+            maxHeight,
+            width: 'auto',
+            height: 'auto',
+            aspectRatio: `${imageWidth} / ${imageHeight}`,
             transform: `translate(${view.offsetX}px, ${view.offsetY}px) scale(${view.scale})`,
             transformOrigin: '0 0',
             cursor: resolveCursor({
