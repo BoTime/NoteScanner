@@ -13,6 +13,16 @@ import { render, waitFor, cleanup } from '@testing-library/react';
 import { SegmentViewer } from './SegmentViewer';
 import type { Renderer } from './renderer';
 
+// jsdom has no ResizeObserver either — SegmentViewer's canvas-width tracking
+// (for aligning the header to the canvas) attaches one as soon as the canvas
+// mounts, which would otherwise throw on every render in this suite.
+class FakeResizeObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+globalThis.ResizeObserver ??= FakeResizeObserver as unknown as typeof ResizeObserver;
+
 class FakeImage {
   onload: (() => void) | null = null;
   onerror: (() => void) | null = null;

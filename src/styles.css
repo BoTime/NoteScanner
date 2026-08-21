@@ -75,21 +75,67 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
+  /* `.sv-header` is `space-between`, which only splits space when there's a
+     sibling (drawMode's point-count text) to split it FROM — with no
+     sibling this is the only flex item and space-between packs it at the
+     start. margin-left: auto claims the remaining space unconditionally, so
+     it stays pinned to the header's (and thus the canvas's) right edge
+     whether or not that sibling is present. */
+  margin-left: auto;
 }
 .sv-muted { font-size: 0.875rem; color: var(--sv-muted-fg); }
 .sv-error { font-size: 0.875rem; color: #dc2626; max-width: 65ch; }
 .sv-error-icon { color: #dc2626; }
 .sv-error-inline { margin-bottom: 0.5rem; }
 
+/* A 2x2 grid, not nested flexboxes: header and frame share column 1, so the
+   header's containing block is exactly the frame's own track — necessary for
+   centering the header to canvasWidth (below) to actually land it on the
+   canvas's own edges, not just the frame's wider one. Legend occupies column
+   2, starting at row 2 (skipping the header's row), so its top lines up with
+   the frame's — and thus the canvas's — top with no height-matching math. */
+.sv-canvas-col {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 13rem;
+  grid-template-rows: auto minmax(0, 1fr);
+  column-gap: 0.25rem;
+  /* Shrink to the cluster's own natural width — header, frame, and legend
+     together — rather than stretching to fill `.sv-root`. `.sv-root` is
+     already `align-items: center`, so a shrunk box here is what centers the
+     whole title+draw-button+preview+legend cluster as one group instead of
+     letting column 1 stretch and drag the canvas to one side. */
+  width: fit-content;
+  max-width: 100%;
+}
+.sv-header { grid-column: 1; grid-row: 1; }
 .sv-frame {
+  grid-column: 1;
+  grid-row: 2;
   position: relative;
   overflow: hidden;
   /* The canvas contain-fits itself (max-width/max-height + aspect-ratio) and
-     is often narrower than the frame on one axis — center it so it doesn't
-     sit flush against the frame's left/top edge. */
+     is often narrower than the frame on one axis. Right-align it (rather
+     than center) so its own right edge — where the toolbar sits — always
+     coincides with the frame's, which is what puts the legend (the next
+     grid column over) flush against the canvas with no JS measurement:
+     centering would leave a variable-width gap that only a canvas-width
+     measurement fed back into the frame's own track could close, and doing
+     that once actually shrank the canvas — the frame's width would partly
+     depend on a measurement of the canvas, which depends on the frame's
+     width. Vertically still centered: the frame's height already tracks the
+     canvas's (no separate height is set), so this rarely does anything, but
+     stays centered for the rare case a caller's `maxHeight` leaves it taller. */
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-end;
+}
+/* Shrink-wraps to the canvas's own contain-fit box, unlike `.sv-frame` which
+   is deliberately wider. `.sv-toolbar` is positioned against this wrapper so
+   it hugs the canvas's own corner instead of the frame's. */
+.sv-canvas-wrap {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
 }
 .sv-canvas {
   border: 1px solid var(--sv-border);
@@ -97,6 +143,41 @@
   background: var(--sv-canvas-bg);
   display: block;
   max-width: 100%;
+}
+
+.sv-legend {
+  /* Explicit placement, not auto-flow: with no `grid-row` set, grid
+     auto-placement fills row 1's empty column-2 cell (beside the header)
+     before it ever reaches row 2 — which put the legend a whole header's
+     height above the canvas instead of level with it. */
+  grid-column: 2;
+  grid-row: 2;
+  flex: none;
+  width: 13rem;
+  margin: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+.sv-legend li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--sv-muted-fg);
+}
+.sv-legend .sv-icon { flex: none; color: inherit; }
+
+@media (max-width: 640px) {
+  .sv-canvas-col {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+    width: 100%;
+  }
+  .sv-header { grid-column: 1; grid-row: 1; }
+  .sv-frame { grid-column: 1; grid-row: 2; }
+  .sv-legend { grid-column: 1; grid-row: 3; width: 100%; }
 }
 
 .sv-status {

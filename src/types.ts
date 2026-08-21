@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { RendererFactory } from './renderer';
 import type { ViewerStatus } from './core';
 
@@ -39,4 +40,12 @@ export interface SegmentViewerProps {
   renderer?: RendererFactory;
   /** Passed through to the root element. */
   className?: string;
+  /**
+   * Rendered at the header's left edge, level with "Draw segment" on the
+   * right — the header spans exactly the canvas's own measured width, so
+   * this is how a caller-owned title (e.g. "Detected Segments") ends up
+   * aligned with the canvas's left edge rather than page content elsewhere.
+   * The package stays domain-neutral about the text itself.
+   */
+  headingSlot?: ReactNode;
 }

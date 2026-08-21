@@ -115,6 +115,7 @@ export function SegmentViewer({
   formatSegmentLabel,
   renderer,
   className,
+  headingSlot,
 }: SegmentViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -201,6 +202,35 @@ export function SegmentViewer({
   // a drag does. Nothing reads live key state, so a missed keyup (macOS
   // suppresses keyup for keys pressed while ⌘ is held) can never strand it.
   const [panMode, setPanMode] = useState<CursorMode>('select');
+  // The canvas's own rendered (contain-fit) width, purely for aligning
+  // `.sv-header` — and so the "Draw segment" button — to the canvas's own
+  // right edge instead of the wider `.sv-frame`, which centers a narrower
+  // canvas within itself. `contentRect` measures the untransformed layout
+  // box, so the zoom transform below never feeds back into this. This is UI
+  // chrome only — it does not touch the mask-load/decode pipeline, so the
+  // performance contract in AGENTS.md does not apply here.
+  const [canvasWidth, setCanvasWidth] = useState<number | null>(null);
+  const canvasWidthObserverRef = useRef<ResizeObserver | null>(null);
+  // A callback ref, not a plain ref + effect keyed on `loaded`: the canvas
+  // element only exists in the "ready" JSX branch below, and `loaded` (the
+  // base-image-decoded flag) can flip true a render or two before `status`
+  // flips the component out of the loading-placeholder branch — an effect
+  // keyed on `loaded` can fire while `canvasRef.current` is still null from
+  // the placeholder branch and never observes anything. Attaching directly
+  // in the ref callback observes the real node the instant it mounts.
+  const setCanvasRef = useCallback((node: HTMLCanvasElement | null) => {
+    canvasRef.current = node;
+    canvasWidthObserverRef.current?.disconnect();
+    canvasWidthObserverRef.current = null;
+    if (!node) return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (typeof width === 'number') setCanvasWidth(width);
+    });
+    observer.observe(node);
+    canvasWidthObserverRef.current = observer;
+  }, []);
+  useEffect(() => () => canvasWidthObserverRef.current?.disconnect(), []);
   // The previous scale, so the mode rule can see a zoom CROSSING of the fit
   // boundary rather than just the current level. Seeded from the initial view
   // so the first effect run is a no-op.
@@ -930,159 +960,201 @@ export function SegmentViewer({
   return (
     <div ref={wrapperRef} className={rootClassName}>
       {drawError && <p className="sv-error sv-error-inline">{drawError}</p>}
-      <div className="sv-header">
-        {drawMode && (
-          <div className="sv-muted">
-            {draftPoints.length} polygon point{draftPoints.length === 1 ? '' : 's'} placed
+      <div className="sv-canvas-col">
+        <div
+          className="sv-header"
+          // `.sv-header` and `.sv-frame` share the same grid column (see
+          // `.sv-canvas-col` in styles.css), so this box is already exactly
+          // as wide as the frame's own track — but the canvas itself,
+          // contain-fit and right-aligned *within* that track (`.sv-frame`'s
+          // `justify-content: flex-end`), is usually narrower still.
+          // Right-aligning the header to the canvas's own measured width
+          // (see canvasWidth above) — matching how the canvas itself sits —
+          // is what actually lines the header, and the Draw-segment button
+          // pinned to its end, up with the canvas's own edges.
+          style={canvasWidth ? { width: canvasWidth, marginLeft: 'auto' } : undefined}
+        >
+          {headingSlot}
+          {drawMode && (
+              <div className="sv-muted">
+                {draftPoints.length} polygon point{draftPoints.length === 1 ? '' : 's'} placed
+              </div>
+            )}
+            <div className="sv-actions">
+              {drawMode ? (
+                <>
+                  <button
+                    type="button"
+                    className="sv-btn"
+                    onClick={() => void finishDrawing()}
+                    disabled={draftPoints.length < 3 || creatingSegment}
+                  >
+                    {creatingSegment ? (
+                      <Loader2Icon className="sv-icon sv-spin" />
+                    ) : (
+                      <CheckIcon className="sv-icon" />
+                    )}
+                    Finish
+                  </button>
+                  <button
+                    type="button"
+                    className="sv-btn sv-btn-outline"
+                    onClick={cancelDrawing}
+                    disabled={creatingSegment}
+                  >
+                    <XIcon className="sv-icon" />
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="sv-btn"
+                  onClick={() => {
+                    setDrawMode(true);
+                    // Draw and drag are mutually exclusive: entering draw mode
+                    // always drops the hand, otherwise pan silently outranks draw
+                    // in resolveCursor/handleCanvasClick and points cannot be
+                    // placed at all.
+                    setPanMode('select');
+                    setPopup(null);
+                    setHoveredId(null);
+                  }}
+                  disabled={!loaded}
+                >
+                  <CropIcon className="sv-icon" />
+                  Draw segment
+                </button>
+              )}
+            </div>
           </div>
-        )}
-        <div className="sv-actions">
-          {drawMode ? (
-            <>
-              <button
-                type="button"
-                className="sv-btn"
-                onClick={() => void finishDrawing()}
-                disabled={draftPoints.length < 3 || creatingSegment}
-              >
-                {creatingSegment ? (
-                  <Loader2Icon className="sv-icon sv-spin" />
-                ) : (
-                  <CheckIcon className="sv-icon" />
-                )}
-                Finish
-              </button>
-              <button
-                type="button"
-                className="sv-btn sv-btn-outline"
-                onClick={cancelDrawing}
-                disabled={creatingSegment}
-              >
-                <XIcon className="sv-icon" />
-                Cancel
-              </button>
-            </>
-          ) : (
-            <button
-              type="button"
-              className="sv-btn sv-btn-outline"
-              onClick={() => {
-                setDrawMode(true);
-                // Draw and drag are mutually exclusive: entering draw mode
-                // always drops the hand, otherwise pan silently outranks draw
-                // in resolveCursor/handleCanvasClick and points cannot be
-                // placed at all.
-                setPanMode('select');
-                setPopup(null);
-                setHoveredId(null);
-              }}
-              disabled={!loaded}
-            >
-              <CropIcon className="sv-icon" />
-              Draw segment
-            </button>
-          )}
-        </div>
-      </div>
-      <div
-        className="sv-frame"
-        // Shared with the loading/error placeholder so the swap is layout-neutral.
-        style={frameBoxStyle}
-      >
-        <canvas
-          ref={canvasRef}
-          onClick={handleCanvasClick}
-          onDoubleClick={handleCanvasDoubleClick}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
-          onContextMenu={handleContextMenu}
-          style={{
-            maxWidth: '100%',
-            // NOT '100%': a percentage max-height resolves against the parent's
-            // own height, and `.sv-frame` has no definite height (its only
-            // height constraint is this same `maxHeight` cap, and a cap is not
-            // a definite height). Per spec the percentage would resolve to
-            // `none`, letting the canvas grow past the frame — whose
-            // `overflow: hidden` would then silently CLIP a tall image instead
-            // of scaling it down to fit. Reusing `frameBoxStyle`'s concrete
-            // `maxHeight` bounds the canvas for real and keeps the two boxes
-            // agreeing on the same limit.
-            maxHeight,
-            width: 'auto',
-            height: 'auto',
-            aspectRatio: `${imageWidth} / ${imageHeight}`,
-            transform: `translate(${view.offsetX}px, ${view.offsetY}px) scale(${view.scale})`,
-            transformOrigin: '0 0',
-            cursor: resolveCursor({
-              mode: panMode,
-              drawMode,
-              loaded,
-              panning,
-            }),
-            display: 'block',
-          }}
-          className="sv-canvas"
-        />
-        <div className="sv-toolbar">
-          <button
-            type="button"
-            className="sv-btn sv-btn-icon"
-            aria-label="Zoom in"
-            onClick={() => zoomByFactor(1.5)}
-            disabled={!loaded || view.scale >= MAX_SCALE}
+          <div
+            className="sv-frame"
+            // Shared with the loading/error placeholder so the swap is layout-neutral.
+            style={frameBoxStyle}
           >
-            <PlusIcon className="sv-icon" />
-          </button>
-          <button
-            type="button"
-            className="sv-btn sv-btn-icon"
-            aria-label="Zoom out"
-            onClick={() => zoomByFactor(1 / 1.5)}
-            disabled={!loaded || view.scale <= MIN_SCALE}
-          >
-            <MinusIcon className="sv-icon" />
-          </button>
-          <button
-            type="button"
-            className="sv-btn sv-btn-icon"
-            aria-label="Reset zoom"
-            onClick={resetView}
-            disabled={
-              !loaded ||
-              (view.scale === 1 && view.offsetX === 0 && view.offsetY === 0)
-            }
-          >
-            <MaximizeIcon className="sv-icon" />
-          </button>
-          {/* The toggle is a mode, not an action — the rule separates it. */}
-          <div className="sv-toolbar-sep" aria-hidden />
-          <button
-            type="button"
-            // Latched fill when on, so "pressed" is unmistakable and distinct
-            // from hover; quiet otherwise.
-            className={
-              panMode === 'pan'
-                ? 'sv-btn sv-btn-icon sv-btn-latched'
-                : 'sv-btn sv-btn-icon'
-            }
-            // Pressed tracks the LATCHED mode — that is what this button controls.
-            aria-pressed={panMode === 'pan'}
-            aria-label={
-              panMode === 'pan'
-                ? 'Pan mode on — switch to select mode (⌘/Ctrl)'
-                : 'Select mode on — switch to pan mode (⌘/Ctrl)'
-            }
-            onClick={toggleCursorMode}
-            disabled={!loaded || view.scale === MIN_SCALE}
-          >
-            {/* Always the hand: this button means "pan", and the highlight —
-                not a swapped glyph — is what says whether it is on. A control
-                whose icon changes reads as two different buttons. */}
-            <HandIcon className="sv-icon" />
-          </button>
-        </div>
+            {/* Sized to the canvas's own contain-fit box (not the wider
+                `.sv-frame`, which centers a narrower canvas within itself) so
+                the toolbar below — absolutely positioned against THIS
+                wrapper — hugs the canvas's own corner instead of floating in
+                the empty space beside it. */}
+            <div className="sv-canvas-wrap">
+              <canvas
+                ref={setCanvasRef}
+                onClick={handleCanvasClick}
+                onDoubleClick={handleCanvasDoubleClick}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseUp}
+                onContextMenu={handleContextMenu}
+                style={{
+                  maxWidth: '100%',
+                  // NOT '100%': a percentage max-height resolves against the parent's
+                  // own height, and `.sv-frame` has no definite height (its only
+                  // height constraint is this same `maxHeight` cap, and a cap is not
+                  // a definite height). Per spec the percentage would resolve to
+                  // `none`, letting the canvas grow past the frame — whose
+                  // `overflow: hidden` would then silently CLIP a tall image instead
+                  // of scaling it down to fit. Reusing `frameBoxStyle`'s concrete
+                  // `maxHeight` bounds the canvas for real and keeps the two boxes
+                  // agreeing on the same limit.
+                  maxHeight,
+                  width: 'auto',
+                  height: 'auto',
+                  aspectRatio: `${imageWidth} / ${imageHeight}`,
+                  transform: `translate(${view.offsetX}px, ${view.offsetY}px) scale(${view.scale})`,
+                  transformOrigin: '0 0',
+                  cursor: resolveCursor({
+                    mode: panMode,
+                    drawMode,
+                    loaded,
+                    panning,
+                  }),
+                  display: 'block',
+                }}
+                className="sv-canvas"
+              />
+              <div className="sv-toolbar">
+                <button
+                  type="button"
+                  className="sv-btn sv-btn-icon"
+                  aria-label="Zoom in"
+                  onClick={() => zoomByFactor(1.5)}
+                  disabled={!loaded || view.scale >= MAX_SCALE}
+                >
+                  <PlusIcon className="sv-icon" />
+                </button>
+                <button
+                  type="button"
+                  className="sv-btn sv-btn-icon"
+                  aria-label="Zoom out"
+                  onClick={() => zoomByFactor(1 / 1.5)}
+                  disabled={!loaded || view.scale <= MIN_SCALE}
+                >
+                  <MinusIcon className="sv-icon" />
+                </button>
+                <button
+                  type="button"
+                  className="sv-btn sv-btn-icon"
+                  aria-label="Reset zoom"
+                  onClick={resetView}
+                  disabled={
+                    !loaded ||
+                    (view.scale === 1 && view.offsetX === 0 && view.offsetY === 0)
+                  }
+                >
+                  <MaximizeIcon className="sv-icon" />
+                </button>
+                {/* The toggle is a mode, not an action — the rule separates it. */}
+                <div className="sv-toolbar-sep" aria-hidden />
+                <button
+                  type="button"
+                  // Latched fill when on, so "pressed" is unmistakable and distinct
+                  // from hover; quiet otherwise.
+                  className={
+                    panMode === 'pan'
+                      ? 'sv-btn sv-btn-icon sv-btn-latched'
+                      : 'sv-btn sv-btn-icon'
+                  }
+                  // Pressed tracks the LATCHED mode — that is what this button controls.
+                  aria-pressed={panMode === 'pan'}
+                  aria-label={
+                    panMode === 'pan'
+                      ? 'Pan mode on — switch to select mode (⌘/Ctrl)'
+                      : 'Select mode on — switch to pan mode (⌘/Ctrl)'
+                  }
+                  onClick={toggleCursorMode}
+                  disabled={!loaded || view.scale === MIN_SCALE}
+                >
+                  {/* Always the hand: this button means "pan", and the highlight —
+                      not a swapped glyph — is what says whether it is on. A control
+                      whose icon changes reads as two different buttons. */}
+                  <HandIcon className="sv-icon" />
+                </button>
+              </div>
+            </div>
+          </div>
+          {/* Same top-to-bottom order as `.sv-toolbar`: zoom in, zoom out,
+              reset, pan — so each row reads as that button's own caption. */}
+          <ul className="sv-legend" aria-label="Viewer controls">
+            <li>
+              <PlusIcon className="sv-icon" />
+              <span>Zoom in</span>
+            </li>
+            <li>
+              <MinusIcon className="sv-icon" />
+              <span>Zoom out</span>
+            </li>
+            <li>
+              <MaximizeIcon className="sv-icon" />
+              <span>Reset to original size</span>
+            </li>
+            <li>
+              <HandIcon className="sv-icon" />
+              <span>Drag to move the image</span>
+            </li>
+          </ul>
       </div>
       {popup && (
         <Popup
