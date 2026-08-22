@@ -1,3 +1,4 @@
+export * from './image-cache';
 export * from './segment-viewer-logic';
 export * from './view-transform';
 export * from './cursor-mode';
