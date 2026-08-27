@@ -16,6 +16,17 @@ export const PHASE_ORDER = [
 
 export type SegmentationPhase = (typeof PHASE_ORDER)[number];
 
+/**
+ * The internal split of the `filter` stage, in render order. Deliberately NOT
+ * folded into `PHASE_ORDER`: `SegmentationPhase` is public API and also types
+ * `SegmenterFailure.phase`, so widening it would admit values that can never
+ * be thrown, and summing the results table's total column would count
+ * `filter` twice.
+ */
+export const FILTER_SUBSTEP_ORDER = ['select', 'upscale', 'threshold'] as const;
+
+export type FilterSubstep = (typeof FILTER_SUBSTEP_ORDER)[number];
+
 export interface SegmenterOptions {
   /** Prompt-grid density. One crop layer only — no multi-crop, by design. */
   pointsPerSide: number;
@@ -70,6 +81,13 @@ export interface PhaseTiming {
 
 export interface TimingReport {
   phases: Record<SegmentationPhase, PhaseTiming>;
+  /**
+   * The `filter` stage broken down. Required, not optional: `createSegmenter`
+   * rebuilds this report as an object literal to splice in `mask-encode`, and
+   * requiring the field makes the compiler catch a dropped passthrough across
+   * the worker boundary.
+   */
+  filterSubPhases: Record<FilterSubstep, PhaseTiming>;
   /** Wall clock for the whole run, measured on the main thread. */
   totalMs: number;
 }

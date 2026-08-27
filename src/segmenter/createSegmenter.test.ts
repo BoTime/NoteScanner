@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { createSegmenter, isWebGPUAvailable } from './createSegmenter';
 import {
+  FILTER_SUBSTEP_ORDER,
   PHASE_ORDER,
   SegmenterFailure,
   createTimingAccumulator,
@@ -109,6 +110,34 @@ describe('createSegmenter', () => {
     expect(result.timings.phases['mask-encode'].count).toBe(0);
     // totalMs is measured on the main thread, not copied from the worker.
     expect(result.timings.totalMs).not.toBe(42);
+  });
+
+  it('carries the worker filterSubPhases through the rebuilt report', async () => {
+    const workerTimings = createTimingAccumulator();
+    workerTimings.recordFilterSub('select', 4);
+    workerTimings.recordFilterSub('select', 6);
+    workerTimings.recordFilterSub('upscale', 100);
+
+    const segmenter = createSegmenter({ createWorker: spawn });
+    const pending = segmenter.segment(fakeBitmap());
+    FakeWorker.instances[0].emit({
+      type: 'done',
+      masks: [],
+      width: 2,
+      height: 1,
+      timings: workerTimings.report(42),
+      counts: { raw: 24, afterFilter: 9, afterNms: 0 },
+    });
+
+    const result = await pending;
+    expect(Object.keys(result.timings.filterSubPhases)).toEqual([...FILTER_SUBSTEP_ORDER]);
+    expect(result.timings.filterSubPhases.select.total).toBe(10);
+    expect(result.timings.filterSubPhases.select.p50).toBe(6);
+    expect(result.timings.filterSubPhases.upscale.total).toBe(100);
+    expect(result.timings.filterSubPhases.upscale.p50).toBe(100);
+    // The main thread contributes nothing to `filter`, so an unrecorded
+    // sub-step still arrives zero-filled rather than missing.
+    expect(result.timings.filterSubPhases.threshold.count).toBe(0);
   });
 
   it('encodes each surviving mask into a ViewerSegment', async () => {

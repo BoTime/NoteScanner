@@ -135,6 +135,9 @@ export function createSegmenter(config: CreateSegmenterConfig = {}): Segmenter {
                   ...message.timings.phases,
                   'mask-encode': summarizePhase(encodeSamples),
                 },
+                // Straight passthrough: the main thread contributes nothing to
+                // the `filter` stage.
+                filterSubPhases: message.timings.filterSubPhases,
                 // Wall clock from this side of the boundary, so worker spawn
                 // and bitmap transfer are inside the number the table reports.
                 totalMs: performance.now() - startedAt,
