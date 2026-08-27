@@ -1,27 +1,23 @@
-# @sambacollab/segment-viewer
+# note-scanner
 
-Canvas segment/mask viewer for React. Zero runtime dependencies — except the
-optional [`/segmenter` subpath](#sambacollabsegment-viewersegmenter-optional-prototype),
-which needs `@huggingface/transformers`. `react` and `react-dom` are peers
-(`>=18`).
+In-browser post-it note scanner. A React segment/mask viewer, plus an optional
+everything-mode segmenter that runs SAM on WebGPU entirely client-side.
+
+Zero runtime dependencies — except the optional
+[`/segmenter` subpath](#note-scannersegmenter-optional-prototype), which needs
+`@huggingface/transformers`. `react` and `react-dom` are peers (`>=18`).
 
 ## Install
 
-Add one line to your `.npmrc`:
-
-```
-@sambacollab:registry=https://npm.pkg.github.com
-```
-
 ```bash
-npm install @sambacollab/segment-viewer
+npm install note-scanner
 ```
 
 ## Use
 
 ```tsx
-import { SegmentViewer } from '@sambacollab/segment-viewer';
-import '@sambacollab/segment-viewer/styles.css';
+import { SegmentViewer } from 'note-scanner';
+import 'note-scanner/styles.css';
 
 <SegmentViewer
   imageUrl={url}
@@ -46,25 +42,30 @@ for dark mode:
 
 ## Subpaths
 
-- `@sambacollab/segment-viewer` — the component
-- `@sambacollab/segment-viewer/core` — the pure math (hit-testing, coverage,
-  bounds, connected components, view transform), React-free
-- `@sambacollab/segment-viewer/styles.css`
+- `note-scanner` — the component
+- `note-scanner/core` — the pure math (hit-testing, coverage, bounds,
+  connected components, view transform), React-free
+- `note-scanner/segmenter` — the optional WebGPU segmenter (see below)
+- `note-scanner/styles.css`
 
 ## Renderers
 
 `renderer?: RendererFactory` swaps the painting backend; the default is
-`createCanvas2DRenderer`.
+`createCanvas2DRenderer`. The `Renderer` interface takes coverage arrays, not
+images — see [issue #1](https://github.com/BoTime/NoteScanner/issues/1) for the
+planned WebGL2 renderer.
 
 ## Development
 
 ```bash
-npm run playground -w @sambacollab/segment-viewer   # Vite dev app
-npm run test -w @sambacollab/segment-viewer
-npm run smoke -w @sambacollab/segment-viewer        # build + artifact check
+npm install
+npm run playground   # Vite dev app
+npm run test
+npm run typecheck
+npm run smoke        # build + artifact check
 ```
 
-## `@sambacollab/segment-viewer/segmenter` (optional, prototype)
+## `note-scanner/segmenter` (optional, prototype)
 
 An in-browser everything-mode segmenter: it runs SAM on WebGPU in a module
 worker and produces `ViewerSegment[]` for `<SegmentViewer>` to render. It is a
@@ -73,7 +74,7 @@ megabytes of ONNX weights; that package is an **optional peer**, so importing
 the main entry or `/core` still pulls in nothing at runtime.
 
 ```ts
-import { createSegmenter, isWebGPUAvailable } from '@sambacollab/segment-viewer/segmenter';
+import { createSegmenter, isWebGPUAvailable } from 'note-scanner/segmenter';
 
 if (isWebGPUAvailable()) {
   const segmenter = createSegmenter();
@@ -88,7 +89,24 @@ Vite and webpack 5 resolve; any other host passes its own
 worked example.
 
 This default only resolves when consuming the package from source (the
-`development` export condition, as this workspace's Vite playground does). A
+`development` export condition, as this repo's Vite playground does). A
 consumer of the published npm tarball must pass `createSegmenter({ createWorker })`
 with their own worker construction, since the published `dist/segmenter/` does
 not include a bundled worker file.
+
+### Status
+
+The segmenter is a **prototype**. A full everything-mode run currently takes
+~98 s per image (excluding one-time model load), and ~91% of that is overhead
+rather than model inference. The analysis and the staged plan to get it to
+~7-10 s live in [issue #1](https://github.com/BoTime/NoteScanner/issues/1).
+
+The default checkpoint is `Xenova/slimsam-77-uniform`, configurable via the
+`modelId` option. No transformers.js-loadable MobileSAM exists on the HF Hub
+today (`nielsr/mobilesam` and `bhllx/mobilesam` ship PyTorch weights only, with
+no `onnx/` folder), so SlimSAM stands in; the image backbone is ~2-3% of a run,
+so the choice barely moves the timings.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

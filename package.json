@@ -1,8 +1,25 @@
 {
-  "name": "@sambacollab/segment-viewer",
+  "name": "note-scanner",
   "version": "0.1.0",
-  "description": "Canvas segment/mask viewer for React",
-  "license": "UNLICENSED",
+  "description": "In-browser post-it note scanner: a React segment/mask viewer with an optional WebGPU SAM segmenter",
+  "license": "MIT",
+  "author": "BoTime",
+  "homepage": "https://github.com/BoTime/NoteScanner#readme",
+  "bugs": {
+    "url": "https://github.com/BoTime/NoteScanner/issues"
+  },
+  "keywords": [
+    "react",
+    "segmentation",
+    "sam",
+    "segment-anything",
+    "webgpu",
+    "canvas",
+    "mask",
+    "ocr",
+    "post-it",
+    "whiteboard"
+  ],
   "type": "module",
   "sideEffects": [
     "*.css"
@@ -36,8 +53,7 @@
     "./package.json": "./package.json"
   },
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com",
-    "access": "restricted",
+    "access": "public",
     "exports": {
       ".": {
         "types": "./dist/index.d.ts",
@@ -60,8 +76,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/SambaCollab/samba.git",
-    "directory": "packages/segment-viewer"
+    "url": "git+https://github.com/BoTime/NoteScanner.git"
   },
   "scripts": {
     "build": "tsup",
