@@ -107,7 +107,10 @@ export function CompareView() {
   const ordered = COMPARE_ROWS.map((row) => results[row.id]).filter(
     (result): result is CompareResult => Boolean(result),
   );
-  const agreements = pairAgreements(results);
+  // Memoised on `results`: comparing two mask sets is a full-resolution
+  // O(masks squared) scan, and a progress event fires per decode batch — re-running
+  // it on every render would freeze the sweep once a pair has both halves.
+  const agreements = useMemo(() => pairAgreements(results), [results]);
   const busy = runningRowId !== null || sweeping;
 
   async function copyMarkdown() {
