@@ -252,7 +252,7 @@ async function run(request: SegmenterRequest): Promise<void> {
     // ---- same object constantly, so this is where the count actually falls.
     phase = 'nms';
     started = performance.now();
-    const kept = dedupeMasks(candidates, options.nmsIouThreshold);
+    const kept = dedupeMasks(candidates, options.nmsIouThreshold, originalWidth);
     elapsed = performance.now() - started;
     timings.record('nms', elapsed);
     post({ type: 'progress', event: { phase: 'nms', done: 1, total: 1, ms: elapsed } });
