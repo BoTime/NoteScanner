@@ -86,3 +86,9 @@ referenced as `new URL('./worker/segmenter.worker.ts', import.meta.url)`, which
 Vite and webpack 5 resolve; any other host passes its own
 `createSegmenter({ createWorker })`. See `playground/SegmentView.tsx` for a
 worked example.
+
+This default only resolves when consuming the package from source (the
+`development` export condition, as this workspace's Vite playground does). A
+consumer of the published npm tarball must pass `createSegmenter({ createWorker })`
+with their own worker construction, since the published `dist/segmenter/` does
+not include a bundled worker file.
