@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { PHASE_ORDER } from './types';
+import { PHASE_ORDER, FILTER_SUBSTEP_ORDER } from './types';
 import { createTimingAccumulator, summarizePhase } from './timing';
 
 describe('summarizePhase', () => {
@@ -58,5 +58,60 @@ describe('createTimingAccumulator', () => {
     expect(report.phases.encode.total).toBe(100);
     expect(report.phases.nms.total).toBe(5);
     expect(report.phases.decode.total).toBe(0);
+  });
+});
+
+describe('createTimingAccumulator filter sub-steps', () => {
+  it('reports every sub-step in FILTER_SUBSTEP_ORDER, zero-filled when never recorded', () => {
+    const report = createTimingAccumulator().report(0);
+    expect(Object.keys(report.filterSubPhases)).toEqual([...FILTER_SUBSTEP_ORDER]);
+    for (const step of FILTER_SUBSTEP_ORDER) {
+      expect(report.filterSubPhases[step].count).toBe(0);
+    }
+  });
+
+  it('accumulates repeated samples for one sub-step', () => {
+    const timings = createTimingAccumulator();
+    timings.recordFilterSub('upscale', 10);
+    timings.recordFilterSub('upscale', 30);
+    timings.recordFilterSub('upscale', 20);
+    const report = timings.report(60);
+    expect(report.filterSubPhases.upscale.count).toBe(3);
+    expect(report.filterSubPhases.upscale.p50).toBe(20);
+    expect(report.filterSubPhases.upscale.max).toBe(30);
+    expect(report.filterSubPhases.upscale.total).toBe(60);
+    expect(report.filterSubPhases.select.count).toBe(0);
+  });
+
+  it('keeps sub-steps independent of the phases they nest inside', () => {
+    const timings = createTimingAccumulator();
+    timings.record('filter', 100);
+    timings.recordFilterSub('select', 3);
+    const report = timings.report(100);
+    expect(report.phases.filter.total).toBe(100);
+    expect(report.filterSubPhases.select.total).toBe(3);
+    expect(report.filterSubPhases.threshold.total).toBe(0);
+  });
+
+  // The no-residual invariant: the worker's three regions are drawn to be
+  // exhaustive and non-overlapping across the stage, so their totals sum to
+  // the filter total. A residual is exactly what would muddy the percentage
+  // breakdown this instrumentation exists to produce.
+  it('has the three sub-step totals sum to the filter total with no residual', () => {
+    const timings = createTimingAccumulator();
+    timings.record('filter', 100);
+    timings.recordFilterSub('select', 3);
+    timings.recordFilterSub('upscale', 80);
+    timings.recordFilterSub('threshold', 17);
+    timings.record('filter', 50);
+    timings.recordFilterSub('select', 2);
+    timings.recordFilterSub('upscale', 40);
+    timings.recordFilterSub('threshold', 8);
+    const report = timings.report(150);
+    const subTotal = FILTER_SUBSTEP_ORDER.reduce(
+      (sum, step) => sum + report.filterSubPhases[step].total,
+      0,
+    );
+    expect(subTotal).toBe(report.phases.filter.total);
   });
 });

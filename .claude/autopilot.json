@@ -1,0 +1,11 @@
+{
+  "test_command": "npm test",
+  "github": {
+    "project_owner": "BoTime",
+    "project_number": 2,
+    "status_field": "Status",
+    "status_ready": "Ready",
+    "status_in_progress": "In progress",
+    "status_in_review": "In review"
+  }
+}

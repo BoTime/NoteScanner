@@ -30,6 +30,7 @@ import {
   stabilityScore,
   thresholdMask,
   type BinaryMask,
+  type FilterSubstep,
   type RawMask,
   type SegmentationPhase,
   type SegmenterOptions,
@@ -160,6 +161,14 @@ async function run(request: SegmenterRequest): Promise<void> {
       // ---- filter, at low resolution ----
       phase = 'filter';
       started = performance.now();
+      // A second cursor for the sub-regions. Each region ends exactly where
+      // the next begins, so the three sum to the stage total.
+      let subStarted = started;
+      const recordSub = (step: FilterSubstep) => {
+        const now = performance.now();
+        timings.recordFilterSub(step, now - subStarted);
+        subStarted = now;
+      };
       // dims: [1, point_batch_size, masks_per_point, lowHeight, lowWidth].
       // Read them off the tensor rather than hardcoding 3 x 256 x 256.
       const dims = predMasks.dims;
@@ -195,6 +204,7 @@ async function run(request: SegmenterRequest): Promise<void> {
         }
         if (bestFlat >= 0) chosen.push(bestFlat);
       }
+      recordSub('select');
 
       if (chosen.length > 0) {
         const selected = new Float32Array(chosen.length * lowPixels);
@@ -214,6 +224,7 @@ async function run(request: SegmenterRequest): Promise<void> {
           { binarize: false },
         );
         const full = upscaled[0].data as Float32Array;
+        recordSub('upscale');
         for (let k = 0; k < chosen.length; k += 1) {
           const mask = thresholdMask(
             full.subarray(k * fullPixels, (k + 1) * fullPixels),
@@ -221,6 +232,7 @@ async function run(request: SegmenterRequest): Promise<void> {
           );
           if (mask.area >= options.minMaskArea) candidates.push(mask);
         }
+        recordSub('threshold');
       }
       timings.record('filter', performance.now() - started);
 

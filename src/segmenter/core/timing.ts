@@ -1,4 +1,11 @@
-import { PHASE_ORDER, type PhaseTiming, type SegmentationPhase, type TimingReport } from './types';
+import {
+  FILTER_SUBSTEP_ORDER,
+  PHASE_ORDER,
+  type FilterSubstep,
+  type PhaseTiming,
+  type SegmentationPhase,
+  type TimingReport,
+} from './types';
 
 /**
  * Percentiles, not means — the same estimator as `playground/fixtures.ts`'s
@@ -27,18 +34,28 @@ export function summarizePhase(samples: readonly number[]): PhaseTiming {
 
 export interface TimingAccumulator {
   record(phase: SegmentationPhase, ms: number): void;
+  /** A region inside the `filter` stage. Nests under it; does not replace it. */
+  recordFilterSub(step: FilterSubstep, ms: number): void;
   /** `totalMs` is wall clock for the whole run, measured by the caller. */
   report(totalMs: number): TimingReport;
 }
 
 export function createTimingAccumulator(): TimingAccumulator {
   const samples = new Map<SegmentationPhase, number[]>();
+  const filterSamples = new Map<FilterSubstep, number[]>();
+
+  const push = <K>(into: Map<K, number[]>, key: K, ms: number) => {
+    const bucket = into.get(key);
+    if (bucket) bucket.push(ms);
+    else into.set(key, [ms]);
+  };
 
   return {
     record(phase, ms) {
-      const bucket = samples.get(phase);
-      if (bucket) bucket.push(ms);
-      else samples.set(phase, [ms]);
+      push(samples, phase, ms);
+    },
+    recordFilterSub(step, ms) {
+      push(filterSamples, step, ms);
     },
     report(totalMs) {
       // Every phase gets a row even when it never ran, so the results table
@@ -48,7 +65,12 @@ export function createTimingAccumulator(): TimingAccumulator {
       for (const phase of PHASE_ORDER) {
         phases[phase] = summarizePhase(samples.get(phase) ?? []);
       }
-      return { phases, totalMs };
+      // Same zero-fill rule for the filter breakdown.
+      const filterSubPhases = {} as Record<FilterSubstep, PhaseTiming>;
+      for (const step of FILTER_SUBSTEP_ORDER) {
+        filterSubPhases[step] = summarizePhase(filterSamples.get(step) ?? []);
+      }
+      return { phases, filterSubPhases, totalMs };
     },
   };
 }

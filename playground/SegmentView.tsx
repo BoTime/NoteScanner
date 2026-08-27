@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SegmentViewer, type ViewerSegment } from '../src';
 import {
   DEFAULT_SEGMENTER_OPTIONS,
+  FILTER_SUBSTEP_ORDER,
   PHASE_ORDER,
   SegmenterFailure,
   createSegmenter,
@@ -258,14 +259,39 @@ export function SegmentView() {
               {PHASE_ORDER.map((phase) => {
                 const timing = result.timings.phases[phase];
                 return (
-                  <tr key={phase}>
-                    <th align="left" scope="row">{phase}</th>
-                    <td align="right">{ms(timing.p50)}</td>
-                    <td align="right">{ms(timing.p95)}</td>
-                    <td align="right">{ms(timing.max)}</td>
-                    <td align="right">{ms(timing.total)}</td>
-                    <td align="right">{timing.count}</td>
-                  </tr>
+                  <Fragment key={phase}>
+                    <tr>
+                      <th align="left" scope="row">{phase}</th>
+                      <td align="right">{ms(timing.p50)}</td>
+                      <td align="right">{ms(timing.p95)}</td>
+                      <td align="right">{ms(timing.max)}</td>
+                      <td align="right">{ms(timing.total)}</td>
+                      <td align="right">{timing.count}</td>
+                    </tr>
+                    {/* The filter breakdown nests under filter and is NOT a
+                        peer of it — indented and tree-prefixed so nobody sums
+                        it into the phase column. */}
+                    {phase === 'filter' &&
+                      FILTER_SUBSTEP_ORDER.map((step) => {
+                        const sub = result.timings.filterSubPhases[step];
+                        return (
+                          <tr key={`filter-${step}`} data-testid={`filter-substep-${step}`}>
+                            <th
+                              align="left"
+                              scope="row"
+                              style={{ paddingLeft: '1.5em', fontWeight: 'normal', opacity: 0.8 }}
+                            >
+                              └ {step}
+                            </th>
+                            <td align="right">{ms(sub.p50)}</td>
+                            <td align="right">{ms(sub.p95)}</td>
+                            <td align="right">{ms(sub.max)}</td>
+                            <td align="right">{ms(sub.total)}</td>
+                            <td align="right">{sub.count}</td>
+                          </tr>
+                        );
+                      })}
+                  </Fragment>
                 );
               })}
               <tr>
