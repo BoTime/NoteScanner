@@ -2,8 +2,8 @@ import type { ViewerSegment } from '../../types';
 
 /**
  * The phases the segmenter times, in the order the playground's results table
- * renders them. `mask-encode` is main-thread work (binary mask -> PNG data
- * URL); every other phase happens inside the worker.
+ * renders them. Every one of them happens inside the worker — including
+ * `mask-encode`, which used to run on the main thread.
  */
 export const PHASE_ORDER = [
   'model-load',
@@ -82,10 +82,9 @@ export interface PhaseTiming {
 export interface TimingReport {
   phases: Record<SegmentationPhase, PhaseTiming>;
   /**
-   * The `filter` stage broken down. Required, not optional: `createSegmenter`
-   * rebuilds this report as an object literal to splice in `mask-encode`, and
-   * requiring the field makes the compiler catch a dropped passthrough across
-   * the worker boundary.
+   * The `filter` stage broken down. Required, not optional: the worker's whole
+   * report is passed through, and requiring the field makes the compiler catch
+   * a dropped passthrough across the worker boundary.
    */
   filterSubPhases: Record<FilterSubstep, PhaseTiming>;
   /** Wall clock for the whole run, measured on the main thread. */
@@ -125,9 +124,13 @@ export class SegmenterFailure extends Error {
   }
 }
 
-/** A surviving mask as the worker posts it back, at full image resolution. */
-export interface RawMask {
-  coverage: Uint8Array;
+/**
+ * A surviving mask as the worker posts it back: already a PNG data URL, not a
+ * coverage buffer. Encoding in the worker is what removes both the ~0.7 MB
+ * per-mask transfer and the main-thread encode loop.
+ */
+export interface EncodedMask {
+  maskUrl: string;
   area: number;
 }
 
@@ -142,7 +145,7 @@ export type SegmenterResponse =
   | { type: 'progress'; event: SegmenterProgress }
   | {
       type: 'done';
-      masks: RawMask[];
+      masks: EncodedMask[];
       width: number;
       height: number;
       timings: TimingReport;

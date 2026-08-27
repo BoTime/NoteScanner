@@ -27,11 +27,12 @@ import {
   buildPointGrid,
   createTimingAccumulator,
   dedupeMasks,
+  encodeMaskPng,
   stabilityScore,
   thresholdMask,
   type BinaryMask,
+  type EncodedMask,
   type FilterSubstep,
-  type RawMask,
   type SegmentationPhase,
   type SegmenterOptions,
   type SegmenterRequest,
@@ -256,28 +257,36 @@ async function run(request: SegmenterRequest): Promise<void> {
     timings.record('nms', elapsed);
     post({ type: 'progress', event: { phase: 'nms', done: 1, total: 1, ms: elapsed } });
 
-    const masks: RawMask[] = kept.map((index) => ({
-      coverage: candidates[index].coverage,
-      area: candidates[index].area,
-    }));
+    // ---- mask-encode: right here, while the coverage arrays are still local.
+    // ---- `phase` is set first so a `CompressionStream` failure surfaces as
+    // ---- SegmenterFailure('mask-encode', ...) through the catch below.
+    phase = 'mask-encode';
+    const masks: EncodedMask[] = [];
+    for (const index of kept) {
+      const encodeStarted = performance.now();
+      const maskUrl = await encodeMaskPng(
+        candidates[index].coverage,
+        originalWidth,
+        originalHeight,
+      );
+      timings.record('mask-encode', performance.now() - encodeStarted);
+      masks.push({ maskUrl, area: candidates[index].area });
+    }
 
-    post(
-      {
-        type: 'done',
-        masks,
-        width: originalWidth,
-        height: originalHeight,
-        timings: timings.report(performance.now() - startedAt),
-        counts: {
-          raw: rawCount,
-          afterFilter: candidates.length,
-          afterNms: masks.length,
-        },
+    // No transfer list, deliberately: `masks` is now strings. Not one coverage
+    // buffer crosses the worker boundary any more.
+    post({
+      type: 'done',
+      masks,
+      width: originalWidth,
+      height: originalHeight,
+      timings: timings.report(performance.now() - startedAt),
+      counts: {
+        raw: rawCount,
+        afterFilter: candidates.length,
+        afterNms: masks.length,
       },
-      // Transferred, not cloned: a full-resolution coverage array is ~0.7 MB
-      // and there can be a hundred of them.
-      masks.map((mask) => mask.coverage.buffer as ArrayBuffer),
-    );
+    });
   } catch (error) {
     post({
       type: 'error',

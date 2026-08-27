@@ -5,7 +5,7 @@ import {
   PHASE_ORDER,
   SegmenterFailure,
   createTimingAccumulator,
-  type RawMask,
+  type EncodedMask,
   type SegmenterProgress,
   type SegmenterRequest,
   type SegmenterResponse,
@@ -48,7 +48,7 @@ function fakeBitmap() {
   return { width: 4, height: 4, close: vi.fn() } as unknown as ImageBitmap;
 }
 
-function doneMessage(masks: RawMask[] = []): SegmenterResponse {
+function doneMessage(masks: EncodedMask[] = []): SegmenterResponse {
   return {
     type: 'done',
     masks,
@@ -138,6 +138,56 @@ describe('createSegmenter', () => {
     // The main thread contributes nothing to `filter`, so an unrecorded
     // sub-step still arrives zero-filled rather than missing.
     expect(result.timings.filterSubPhases.threshold.count).toBe(0);
+  });
+
+  it('maps each encoded mask into a ViewerSegment without re-encoding', async () => {
+    // No canvas stub and no encoder stub: the worker already did the work, so
+    // the main thread's whole job here is naming the segments.
+    const segmenter = createSegmenter({ createWorker: spawn });
+    const pending = segmenter.segment(fakeBitmap());
+    FakeWorker.instances[0].emit({
+      type: 'done',
+      masks: [
+        { maskUrl: 'data:image/png;base64,aGk=', area: 1 },
+        { maskUrl: 'data:image/png;base64,eWE=', area: 2 },
+      ],
+      width: 2,
+      height: 1,
+      timings: createTimingAccumulator().report(1),
+      counts: { raw: 3, afterFilter: 2, afterNms: 2 },
+    });
+
+    const result = await pending;
+    expect(result.segments).toEqual([
+      { id: 'segment-1', index: 1, maskUrl: 'data:image/png;base64,aGk=' },
+      { id: 'segment-2', index: 2, maskUrl: 'data:image/png;base64,eWE=' },
+    ]);
+  });
+
+  it('passes the worker mask-encode timing through, splicing nothing in', async () => {
+    const workerTimings = createTimingAccumulator();
+    workerTimings.record('mask-encode', 3);
+    workerTimings.record('mask-encode', 5);
+
+    const segmenter = createSegmenter({ createWorker: spawn });
+    const pending = segmenter.segment(fakeBitmap());
+    FakeWorker.instances[0].emit({
+      type: 'done',
+      masks: [{ maskUrl: 'data:image/png;base64,aGk=', area: 1 }],
+      width: 2,
+      height: 1,
+      timings: workerTimings.report(42),
+      counts: { raw: 3, afterFilter: 1, afterNms: 1 },
+    });
+
+    const result = await pending;
+    // Two samples from the worker, verbatim. A main-thread splice would have
+    // overwritten this with one sample (or zero).
+    expect(result.timings.phases['mask-encode'].count).toBe(2);
+    expect(result.timings.phases['mask-encode'].total).toBe(8);
+    // totalMs is still the one field the main thread owns, so worker spawn and
+    // bitmap transfer stay inside the number the results table reports.
+    expect(result.timings.totalMs).not.toBe(42);
   });
 
   it('forwards every progress event to the callback', async () => {
