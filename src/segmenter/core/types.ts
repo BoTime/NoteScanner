@@ -46,6 +46,20 @@ export interface SegmenterOptions {
   modelId: string;
   /** ONNX weight precision handed to transformers.js. */
   dtype: 'fp32' | 'fp16' | 'q8';
+  /**
+   * Retain the worker's full-resolution `RawMask[]` on the result.
+   *
+   * A CLIENT-SIDE RETENTION FLAG, not an inference parameter — every other
+   * member of this bag is a model knob, this one is not. The worker ignores
+   * it (it always posts masks) and it must never enter the worker's session
+   * cache key, which is keyed on `modelId` and `dtype` alone.
+   *
+   * Off by default because a caller holding the result in React state would
+   * pin tens of megabytes: at 16 points per side that is ~50 full-resolution
+   * coverage arrays at ~0.7 MB each, for the lifetime of the view. Turn it on
+   * only to compare one run's masks against another's.
+   */
+  keepRawMasks: boolean;
 }
 
 /**
@@ -67,6 +81,7 @@ export const DEFAULT_SEGMENTER_OPTIONS: SegmenterOptions = {
   nmsIouThreshold: 0.7,
   modelId: 'Xenova/slimsam-77-uniform',
   dtype: 'fp32',
+  keepRawMasks: false,
 };
 
 export interface PhaseTiming {
@@ -112,6 +127,8 @@ export interface SegmentationResult {
   segments: ViewerSegment[];
   timings: TimingReport;
   counts: SegmentationCounts;
+  /** Present only when the run asked for `keepRawMasks`. */
+  rawMasks?: RawMask[];
 }
 
 /** A failure that names the phase it died in, so the UI can say where. */

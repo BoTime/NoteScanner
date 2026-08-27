@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { createSegmenter, isWebGPUAvailable } from './createSegmenter';
 import {
+  DEFAULT_SEGMENTER_OPTIONS,
   FILTER_SUBSTEP_ORDER,
   PHASE_ORDER,
   SegmenterFailure,
@@ -59,6 +60,33 @@ function doneMessage(masks: RawMask[] = []): SegmenterResponse {
     timings: createTimingAccumulator().report(42),
     counts: { raw: 24, afterFilter: 9, afterNms: masks.length },
   };
+}
+
+/** Minimal `ImageData` / `OffscreenCanvas` so `encodeMaskPng` runs under node. */
+function stubMaskEncoder() {
+  vi.stubGlobal(
+    'ImageData',
+    class {
+      constructor(
+        readonly data: Uint8ClampedArray,
+        readonly width: number,
+        readonly height: number,
+      ) {}
+    },
+  );
+  vi.stubGlobal(
+    'OffscreenCanvas',
+    class {
+      getContext() {
+        return { putImageData: () => {} };
+      }
+      convertToBlob() {
+        return Promise.resolve({
+          arrayBuffer: async () => Uint8Array.from([104, 105]).buffer,
+        });
+      }
+    },
+  );
 }
 
 beforeEach(() => {
@@ -141,29 +169,7 @@ describe('createSegmenter', () => {
   });
 
   it('encodes each surviving mask into a ViewerSegment', async () => {
-    vi.stubGlobal(
-      'ImageData',
-      class {
-        constructor(
-          readonly data: Uint8ClampedArray,
-          readonly width: number,
-          readonly height: number,
-        ) {}
-      },
-    );
-    vi.stubGlobal(
-      'OffscreenCanvas',
-      class {
-        getContext() {
-          return { putImageData: () => {} };
-        }
-        convertToBlob() {
-          return Promise.resolve({
-            arrayBuffer: async () => Uint8Array.from([104, 105]).buffer,
-          });
-        }
-      },
-    );
+    stubMaskEncoder();
 
     const segmenter = createSegmenter({ createWorker: spawn });
     const pending = segmenter.segment(fakeBitmap());
@@ -261,5 +267,53 @@ describe('createSegmenter', () => {
 
     FakeWorker.instances[0].emit(doneMessage());
     await first;
+  });
+
+  it('retains the worker masks when keepRawMasks is requested', async () => {
+    stubMaskEncoder();
+    const segmenter = createSegmenter({ createWorker: spawn });
+    const pending = segmenter.segment(fakeBitmap(), { keepRawMasks: true });
+    FakeWorker.instances[0].emit({
+      type: 'done',
+      masks: [{ coverage: Uint8Array.from([0, 1]), area: 1 }],
+      width: 2,
+      height: 1,
+      timings: createTimingAccumulator().report(1),
+      counts: { raw: 3, afterFilter: 1, afterNms: 1 },
+    });
+
+    const result = await pending;
+    expect(result.rawMasks).toEqual([{ coverage: Uint8Array.from([0, 1]), area: 1 }]);
+    // The segments are still produced — retention is additive, not a mode.
+    expect(result.segments).toHaveLength(1);
+  });
+
+  it('omits rawMasks entirely when keepRawMasks is not requested', async () => {
+    stubMaskEncoder();
+    const segmenter = createSegmenter({ createWorker: spawn });
+    const pending = segmenter.segment(fakeBitmap());
+    FakeWorker.instances[0].emit({
+      type: 'done',
+      masks: [{ coverage: Uint8Array.from([0, 1]), area: 1 }],
+      width: 2,
+      height: 1,
+      timings: createTimingAccumulator().report(1),
+      counts: { raw: 3, afterFilter: 1, afterNms: 1 },
+    });
+
+    const result = await pending;
+    // Absent, not undefined-valued: the coverage buffers must stay collectable.
+    expect('rawMasks' in result).toBe(false);
+  });
+});
+
+describe('DEFAULT_SEGMENTER_OPTIONS', () => {
+  // A regression guard, not a tautology: issue #3 measures fp16 and a larger
+  // batchSize, and the recommendation must come from that measurement rather
+  // than from flipping these on the estimate.
+  it('still ships fp32 at batchSize 8, with raw-mask retention off', () => {
+    expect(DEFAULT_SEGMENTER_OPTIONS.dtype).toBe('fp32');
+    expect(DEFAULT_SEGMENTER_OPTIONS.batchSize).toBe(8);
+    expect(DEFAULT_SEGMENTER_OPTIONS.keepRawMasks).toBe(false);
   });
 });

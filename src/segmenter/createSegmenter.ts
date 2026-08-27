@@ -143,6 +143,10 @@ export function createSegmenter(config: CreateSegmenterConfig = {}): Segmenter {
                 totalMs: performance.now() - startedAt,
               },
               counts: message.counts,
+              // Spread so the key is ABSENT rather than undefined when the
+              // caller did not ask: the buffers must stay collectable for the
+              // common case, which is every run the Segment view makes.
+              ...(resolved.keepRawMasks ? { rawMasks: message.masks } : {}),
             });
           } catch (error) {
             fail('mask-encode', error instanceof Error ? error.message : String(error));
