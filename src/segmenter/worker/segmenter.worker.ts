@@ -33,11 +33,16 @@ import {
   type BinaryMask,
   type EncodedMask,
   type FilterSubstep,
+  type NmsComparison,
   type SegmentationPhase,
   type SegmenterOptions,
   type SegmenterRequest,
   type SegmenterResponse,
 } from '../core';
+
+// Not on the `note-scanner/segmenter` surface by design, so it is imported
+// from the module rather than from the barrel.
+import { dedupeMasksReference } from '../core/nms';
 
 /**
  * `globalThis` is typed as a `Window` under this package's `lib: ["dom", ...]`,
@@ -251,11 +256,36 @@ async function run(request: SegmenterRequest): Promise<void> {
     // ---- nms: once, across every batch. Adjacent grid points land on the
     // ---- same object constantly, so this is where the count actually falls.
     phase = 'nms';
+
+    // The A/B, when asked for. Reference FIRST, over the identical candidate
+    // array, so the comparison is against the same input and not a mutated one.
+    let referenceKept: number[] | null = null;
+    let referenceMs = 0;
+    if (options.compareNms) {
+      const referenceStarted = performance.now();
+      referenceKept = dedupeMasksReference(candidates, options.nmsIouThreshold);
+      referenceMs = performance.now() - referenceStarted;
+    }
+
     started = performance.now();
     const kept = dedupeMasks(candidates, options.nmsIouThreshold, originalWidth);
     elapsed = performance.now() - started;
+    // Deliberately only the fast path: the reference's time travels in
+    // nmsComparison and NOWHERE else, so the results table is never inflated
+    // by the doubled work.
     timings.record('nms', elapsed);
     post({ type: 'progress', event: { phase: 'nms', done: 1, total: 1, ms: elapsed } });
+
+    // Both are returned ascending, so element-wise equality is set equality.
+    const nmsComparison: NmsComparison | null = referenceKept
+      ? {
+          referenceMs,
+          fastMs: elapsed,
+          identical:
+            referenceKept.length === kept.length &&
+            referenceKept.every((value, i) => value === kept[i]),
+        }
+      : null;
 
     // ---- mask-encode: right here, while the coverage arrays are still local.
     // ---- `phase` is set first so a `CompressionStream` failure surfaces as
@@ -286,6 +316,7 @@ async function run(request: SegmenterRequest): Promise<void> {
         afterFilter: candidates.length,
         afterNms: masks.length,
       },
+      ...(nmsComparison ? { nmsComparison } : {}),
     });
   } catch (error) {
     post({
