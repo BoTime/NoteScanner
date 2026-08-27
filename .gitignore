@@ -11,3 +11,7 @@ node_modules
 # worktrees a run works in. Neither belongs in git.
 .superpowers/
 .claude/worktrees/
+
+# Playwright run artifacts (traces, error context, HTML report)
+test-results/
+playwright-report/
