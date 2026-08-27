@@ -94,6 +94,23 @@ consumer of the published npm tarball must pass `createSegmenter({ createWorker 
 with their own worker construction, since the published `dist/segmenter/` does
 not include a bundled worker file.
 
+### Measuring dtype and `batchSize`
+
+`npm run playground` serves a **Compare** tab (`playground/CompareView.tsx`) that
+runs a fixed seven-row matrix — fp16 vs fp32 at 16 and 32 points per side, plus a
+`batchSize` curve — and renders the per-phase timings, the `encode + decode`
+subtotal, and an fp16-vs-fp32 mask-agreement summary as markdown you can paste
+into an issue. It needs a real GPU browser session; the presets, the greedy
+best-IoU pairing and the markdown renderer live in `playground/compare.ts` and
+are unit-tested without one.
+
+The comparison uses the one addition this makes to the package surface:
+`segment(bitmap, { keepRawMasks: true })` retains the full-resolution
+`RawMask[]` on the result as `rawMasks`. It is a client-side retention flag, not
+an inference parameter — the worker ignores it — and it is off by default
+because retaining ~50 full-resolution coverage arrays pins tens of megabytes for
+as long as you hold the result.
+
 ### Status
 
 The segmenter is a **prototype**. A full everything-mode run currently takes

@@ -15,6 +15,9 @@ import sampleUrl from './sample/cafe-table.jpg';
 
 /** The one axis prior probes showed actually moves everything-mode cost. */
 const POINTS_PER_SIDE_CHOICES = [16, 32] as const;
+const DTYPE_CHOICES = ['fp32', 'fp16', 'q8'] as const;
+/** Grid points per model call. 8 is the shipped default; the rest are probes. */
+const BATCH_SIZE_CHOICES = [8, 16, 32, 64] as const;
 
 interface LoadedImage {
   url: string;
@@ -131,6 +134,30 @@ export function SegmentView() {
             onChange={(e) => patch({ pointsPerSide: Number(e.target.value) })}
           >
             {POINTS_PER_SIDE_CHOICES.map((n) => (
+              <option key={n} value={n}>{n}</option>
+            ))}
+          </select>
+        </label>{' '}
+        <label>
+          dtype:{' '}
+          <select
+            data-testid="dtype"
+            value={options.dtype}
+            onChange={(e) => patch({ dtype: e.target.value as SegmenterOptions['dtype'] })}
+          >
+            {DTYPE_CHOICES.map((d) => (
+              <option key={d} value={d}>{d}</option>
+            ))}
+          </select>
+        </label>{' '}
+        <label>
+          batch size:{' '}
+          <select
+            data-testid="batch-size"
+            value={options.batchSize}
+            onChange={(e) => patch({ batchSize: Number(e.target.value) })}
+          >
+            {BATCH_SIZE_CHOICES.map((n) => (
               <option key={n} value={n}>{n}</option>
             ))}
           </select>

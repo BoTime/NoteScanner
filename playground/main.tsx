@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BenchmarkView } from './BenchmarkView';
+import { CompareView } from './CompareView';
 import { SegmentView } from './SegmentView';
 import '../src/styles.css';
 
-type View = 'benchmark' | 'segment';
+type View = 'benchmark' | 'segment' | 'compare';
 
 function App() {
   const [view, setView] = useState<View>('benchmark');
@@ -28,9 +29,19 @@ function App() {
           onClick={() => setView('segment')}
         >
           Segment
+        </button>{' '}
+        <button
+          data-testid="view-compare"
+          type="button"
+          aria-pressed={view === 'compare'}
+          onClick={() => setView('compare')}
+        >
+          Compare
         </button>
       </nav>
-      {view === 'benchmark' ? <BenchmarkView /> : <SegmentView />}
+      {view === 'benchmark' && <BenchmarkView />}
+      {view === 'segment' && <SegmentView />}
+      {view === 'compare' && <CompareView />}
     </main>
   );
 }
