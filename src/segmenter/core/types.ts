@@ -46,6 +46,18 @@ export interface SegmenterOptions {
   modelId: string;
   /** ONNX weight precision handed to transformers.js. */
   dtype: 'fp32' | 'fp16' | 'q8';
+  /**
+   * Run the pre-optimization byte-wise NMS alongside the fast one and report
+   * both times plus whether they kept the identical set. Off by default, and
+   * deliberately so: the reference is on the order of 100x slower than the
+   * fast path (the exact ratio depends on candidate count and mask size), so
+   * ticking this multiplies the `nms` stage by roughly that factor — a minute
+   * or more at `pointsPerSide` 32, with no progress event emitted until the
+   * reference run finishes. That long silence is the option working, not a
+   * hung worker. It exists so the speedup can be measured on a real image
+   * rather than argued about.
+   */
+  compareNms: boolean;
 }
 
 /**
@@ -67,6 +79,7 @@ export const DEFAULT_SEGMENTER_OPTIONS: SegmenterOptions = {
   nmsIouThreshold: 0.7,
   modelId: 'Xenova/slimsam-77-uniform',
   dtype: 'fp32',
+  compareNms: false,
 };
 
 export interface PhaseTiming {
@@ -100,6 +113,23 @@ export interface SegmentationCounts {
   afterNms: number;
 }
 
+/**
+ * The result of one opt-in A/B of the NMS implementations.
+ *
+ * Measurement caveat: the reference runs FIRST, so the fast path sees a warmer
+ * cache. At full-resolution candidate sizes the working set is far past any
+ * cache and the effect is small, but this is not a controlled benchmark —
+ * do not quote the ratio to two significant figures.
+ */
+export interface NmsComparison {
+  /** Wall clock of the byte-wise `dedupeMasksReference`. */
+  referenceMs: number;
+  /** Wall clock of the shipped `dedupeMasks` — the same number `timings` records. */
+  fastMs: number;
+  /** Whether both returned the identical kept-index array. */
+  identical: boolean;
+}
+
 export interface SegmenterProgress {
   phase: SegmentationPhase;
   done: number;
@@ -111,6 +141,8 @@ export interface SegmentationResult {
   segments: ViewerSegment[];
   timings: TimingReport;
   counts: SegmentationCounts;
+  /** Present only when `compareNms` was set. */
+  nmsComparison?: NmsComparison;
 }
 
 /** A failure that names the phase it died in, so the UI can say where. */
@@ -150,5 +182,6 @@ export type SegmenterResponse =
       height: number;
       timings: TimingReport;
       counts: SegmentationCounts;
+      nmsComparison?: NmsComparison;
     }
   | { type: 'error'; phase: SegmentationPhase; message: string };

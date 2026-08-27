@@ -269,4 +269,41 @@ describe('createSegmenter', () => {
     FakeWorker.instances[0].emit(doneMessage());
     await first;
   });
+
+  it('passes compareNms through to the worker, defaulting it off', async () => {
+    const segmenter = createSegmenter({ createWorker: spawn });
+    const first = segmenter.segment(fakeBitmap());
+    expect(FakeWorker.instances[0].posted[0].options.compareNms).toBe(false);
+    FakeWorker.instances[0].emit(doneMessage());
+    await first;
+
+    const second = segmenter.segment(fakeBitmap(), { compareNms: true });
+    expect(FakeWorker.instances[1].posted[0].options.compareNms).toBe(true);
+    FakeWorker.instances[1].emit(doneMessage());
+    await second;
+  });
+
+  it('surfaces nmsComparison from the worker on the result', async () => {
+    const segmenter = createSegmenter({ createWorker: spawn });
+    const pending = segmenter.segment(fakeBitmap(), { compareNms: true });
+    FakeWorker.instances[0].emit({
+      type: 'done',
+      masks: [],
+      width: 2,
+      height: 1,
+      timings: createTimingAccumulator().report(42),
+      counts: { raw: 24, afterFilter: 9, afterNms: 0 },
+      nmsComparison: { referenceMs: 900, fastMs: 30, identical: true },
+    });
+
+    const result = await pending;
+    expect(result.nmsComparison).toEqual({ referenceMs: 900, fastMs: 30, identical: true });
+  });
+
+  it('leaves nmsComparison undefined when the worker sent none', async () => {
+    const segmenter = createSegmenter({ createWorker: spawn });
+    const pending = segmenter.segment(fakeBitmap());
+    FakeWorker.instances[0].emit(doneMessage());
+    expect((await pending).nmsComparison).toBeUndefined();
+  });
 });

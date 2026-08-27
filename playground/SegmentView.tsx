@@ -180,6 +180,16 @@ export function SegmentView() {
             onChange={(e) => patch({ nmsIouThreshold: Number(e.target.value) })}
           />
         </label>
+        {' '}
+        <label>
+          compare NMS (~100x slower nms stage):{' '}
+          <input
+            data-testid="compare-nms"
+            type="checkbox"
+            checked={options.compareNms}
+            onChange={(e) => patch({ compareNms: e.target.checked })}
+          />
+        </label>
       </p>
 
       <p
@@ -307,6 +317,18 @@ export function SegmentView() {
             <strong>{result.counts.afterNms}</strong> after dedup. The last number is the
             one that matters; raw counts are misleading.
           </p>
+          {result.nmsComparison && (
+            <p data-testid="nms-comparison">
+              nms A/B: reference {ms(result.nmsComparison.referenceMs)} ms → fast{' '}
+              {ms(result.nmsComparison.fastMs)} ms
+              {result.nmsComparison.fastMs > 0 &&
+                ` (${(result.nmsComparison.referenceMs / result.nmsComparison.fastMs).toFixed(1)}x)`}
+              . kept sets{' '}
+              <strong>{result.nmsComparison.identical ? 'identical' : 'DIFFERENT'}</strong>. The
+              total row above includes the reference run; the nms phase row does not, so the
+              two will not reconcile in A/B mode.
+            </p>
+          )}
         </>
       )}
 

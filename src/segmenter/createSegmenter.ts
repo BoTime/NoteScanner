@@ -127,6 +127,7 @@ export function createSegmenter(config: CreateSegmenterConfig = {}): Segmenter {
               totalMs: performance.now() - startedAt,
             },
             counts: message.counts,
+            nmsComparison: message.nmsComparison,
           });
         };
 
