@@ -4,6 +4,7 @@ export default defineConfig({
   entry: {
     index: 'src/index.ts',
     'core/index': 'src/core/index.ts',
+    'segmenter/index': 'src/segmenter/index.ts',
   },
   format: ['esm', 'cjs'],
   dts: true,

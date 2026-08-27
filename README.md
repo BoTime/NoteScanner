@@ -61,3 +61,26 @@ npm run playground -w @sambacollab/segment-viewer   # Vite dev app
 npm run test -w @sambacollab/segment-viewer
 npm run smoke -w @sambacollab/segment-viewer        # build + artifact check
 ```
+
+## `@sambacollab/segment-viewer/segmenter` (optional, prototype)
+
+An in-browser everything-mode segmenter: it runs SAM on WebGPU in a module
+worker and produces `ViewerSegment[]` for `<SegmentViewer>` to render. It is a
+**separate subpath** because it needs `@huggingface/transformers` plus tens of
+megabytes of ONNX weights; that package is an **optional peer**, so importing
+the main entry or `/core` still pulls in nothing at runtime.
+
+```ts
+import { createSegmenter, isWebGPUAvailable } from '@sambacollab/segment-viewer/segmenter';
+
+if (isWebGPUAvailable()) {
+  const segmenter = createSegmenter();
+  const { segments, timings, counts } = await segmenter.segment(bitmap, { pointsPerSide: 16 });
+}
+```
+
+Requires WebGPU — there is no CPU fallback by design. The default worker is
+referenced as `new URL('./worker/segmenter.worker.ts', import.meta.url)`, which
+Vite and webpack 5 resolve; any other host passes its own
+`createSegmenter({ createWorker })`. See `playground/SegmentView.tsx` for a
+worked example.

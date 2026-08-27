@@ -26,6 +26,12 @@
       "import": "./dist/core/index.js",
       "require": "./dist/core/index.cjs"
     },
+    "./segmenter": {
+      "types": "./dist/segmenter/index.d.ts",
+      "development": "./src/segmenter/index.ts",
+      "import": "./dist/segmenter/index.js",
+      "require": "./dist/segmenter/index.cjs"
+    },
     "./styles.css": "./src/styles.css",
     "./package.json": "./package.json"
   },
@@ -42,6 +48,11 @@
         "types": "./dist/core/index.d.ts",
         "import": "./dist/core/index.js",
         "require": "./dist/core/index.cjs"
+      },
+      "./segmenter": {
+        "types": "./dist/segmenter/index.d.ts",
+        "import": "./dist/segmenter/index.js",
+        "require": "./dist/segmenter/index.cjs"
       },
       "./styles.css": "./dist/segment-viewer.css",
       "./package.json": "./package.json"
@@ -65,9 +76,16 @@
   },
   "peerDependencies": {
     "react": ">=18",
-    "react-dom": ">=18"
+    "react-dom": ">=18",
+    "@huggingface/transformers": "^4.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@huggingface/transformers": {
+      "optional": true
+    }
   },
   "devDependencies": {
+    "@huggingface/transformers": "^4.2.0",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.2",
     "@types/react": "^19",

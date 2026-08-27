@@ -19,6 +19,9 @@ const required = [
   'dist/core/index.js',
   'dist/core/index.cjs',
   'dist/core/index.d.ts',
+  'dist/segmenter/index.js',
+  'dist/segmenter/index.cjs',
+  'dist/segmenter/index.d.ts',
   'dist/segment-viewer.css',
 ];
 
@@ -40,6 +43,21 @@ for (const rel of ['dist/index.js', 'dist/core/index.js']) {
       console.error(`unresolved external in ${rel}: ${spec}`);
       failed = true;
     }
+  }
+}
+
+// The peer allow-list above cannot protect the zero-runtime-dependency promise
+// any more: `@huggingface/transformers` is now a declared (optional) peer, so
+// it is IN that allow-list by construction. The real invariant is per-entry —
+// only the /segmenter subpath may reach for it.
+const HEAVY_OPTIONAL_PEER = /["']@huggingface\/transformers["']/;
+for (const rel of ['dist/index.js', 'dist/core/index.js']) {
+  const src = readFileSync(path.join(root, rel), 'utf8');
+  if (HEAVY_OPTIONAL_PEER.test(src)) {
+    console.error(
+      `${rel} imports @huggingface/transformers; only the /segmenter subpath may`,
+    );
+    failed = true;
   }
 }
 
