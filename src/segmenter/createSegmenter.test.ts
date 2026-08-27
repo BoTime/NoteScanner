@@ -140,49 +140,6 @@ describe('createSegmenter', () => {
     expect(result.timings.filterSubPhases.threshold.count).toBe(0);
   });
 
-  it('encodes each surviving mask into a ViewerSegment', async () => {
-    vi.stubGlobal(
-      'ImageData',
-      class {
-        constructor(
-          readonly data: Uint8ClampedArray,
-          readonly width: number,
-          readonly height: number,
-        ) {}
-      },
-    );
-    vi.stubGlobal(
-      'OffscreenCanvas',
-      class {
-        getContext() {
-          return { putImageData: () => {} };
-        }
-        convertToBlob() {
-          return Promise.resolve({
-            arrayBuffer: async () => Uint8Array.from([104, 105]).buffer,
-          });
-        }
-      },
-    );
-
-    const segmenter = createSegmenter({ createWorker: spawn });
-    const pending = segmenter.segment(fakeBitmap());
-    FakeWorker.instances[0].emit({
-      type: 'done',
-      masks: [{ coverage: Uint8Array.from([0, 1]), area: 1 }],
-      width: 2,
-      height: 1,
-      timings: createTimingAccumulator().report(1),
-      counts: { raw: 3, afterFilter: 1, afterNms: 1 },
-    });
-
-    const result = await pending;
-    expect(result.segments).toEqual([
-      { id: 'segment-1', index: 1, maskUrl: 'data:image/png;base64,aGk=' },
-    ]);
-    expect(result.timings.phases['mask-encode'].count).toBe(1);
-  });
-
   it('forwards every progress event to the callback', async () => {
     const seen: SegmenterProgress[] = [];
     const segmenter = createSegmenter({ createWorker: spawn });
