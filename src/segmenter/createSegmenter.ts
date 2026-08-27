@@ -1,15 +1,12 @@
 import {
   DEFAULT_SEGMENTER_OPTIONS,
   SegmenterFailure,
-  encodeMaskPng,
-  summarizePhase,
   type SegmentationResult,
   type SegmenterOptions,
   type SegmenterProgress,
   type SegmenterRequest,
   type SegmenterResponse,
 } from './core';
-import type { ViewerSegment } from '../types';
 
 /**
  * Whether this browser can run the segmenter at all.
@@ -97,7 +94,7 @@ export function createSegmenter(config: CreateSegmenterConfig = {}): Segmenter {
           reject(new SegmenterFailure(phase, message));
         };
 
-        const onMessage = async (event: MessageEvent<SegmenterResponse>) => {
+        const onMessage = (event: MessageEvent<SegmenterResponse>) => {
           const message = event.data;
 
           if (message.type === 'progress') {
@@ -111,42 +108,26 @@ export function createSegmenter(config: CreateSegmenterConfig = {}): Segmenter {
           }
 
           detach();
-          try {
-            // Mask -> PNG happens here, on the main thread, because a data URL
-            // is all `SegmentViewer` ever consumes and the worker has already
-            // handed the coverage buffers over.
-            const encodeSamples: number[] = [];
-            const segments: ViewerSegment[] = [];
-            for (let i = 0; i < message.masks.length; i += 1) {
-              const encodeStarted = performance.now();
-              const maskUrl = await encodeMaskPng(
-                message.masks[i].coverage,
-                message.width,
-                message.height,
-              );
-              encodeSamples.push(performance.now() - encodeStarted);
-              segments.push({ id: `segment-${i + 1}`, index: i + 1, maskUrl });
-            }
-
-            resolve({
-              segments,
-              timings: {
-                phases: {
-                  ...message.timings.phases,
-                  'mask-encode': summarizePhase(encodeSamples),
-                },
-                // Straight passthrough: the main thread contributes nothing to
-                // the `filter` stage.
-                filterSubPhases: message.timings.filterSubPhases,
-                // Wall clock from this side of the boundary, so worker spawn
-                // and bitmap transfer are inside the number the table reports.
-                totalMs: performance.now() - startedAt,
-              },
-              counts: message.counts,
-            });
-          } catch (error) {
-            fail('mask-encode', error instanceof Error ? error.message : String(error));
-          }
+          // Nothing to do but name the segments: the worker encoded every mask
+          // before it posted. No try/catch either — an encode failure now
+          // arrives as the worker's own `error` message, already carrying
+          // `phase: 'mask-encode'`.
+          resolve({
+            segments: message.masks.map((mask, i) => ({
+              id: `segment-${i + 1}`,
+              index: i + 1,
+              maskUrl: mask.maskUrl,
+            })),
+            timings: {
+              // Verbatim from the worker: every phase, `mask-encode` included,
+              // is measured on that side now.
+              ...message.timings,
+              // Except wall clock, which is measured from here so worker spawn
+              // and bitmap transfer are inside the number the table reports.
+              totalMs: performance.now() - startedAt,
+            },
+            counts: message.counts,
+          });
         };
 
         const onError = (event: ErrorEvent) => {
