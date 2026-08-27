@@ -1,7 +1,9 @@
 # @sambacollab/segment-viewer
 
-Canvas segment/mask viewer for React. Zero runtime dependencies; `react` and
-`react-dom` are peers (`>=18`).
+Canvas segment/mask viewer for React. Zero runtime dependencies — except the
+optional [`/segmenter` subpath](#sambacollabsegment-viewersegmenter-optional-prototype),
+which needs `@huggingface/transformers`. `react` and `react-dom` are peers
+(`>=18`).
 
 ## Install
 
