@@ -193,6 +193,20 @@ describe('compareMaskSets', () => {
     });
   });
 
+  it('takes the LOWER of the two middle IoUs on an even match count', () => {
+    // Four matches at 1, 0.6, 1/3 and 1/7 — sorted, the two middle values are
+    // 1/3 and 0.6. The lower median reports 1/3, a value a real pair scored;
+    // averaging would report ~0.467, which no pair scored.
+    const baseline = [0, 12, 24, 36].map((x) => boxMask(64, 8, x, 0, 4));
+    const variant = [0, 13, 26, 39].map((x) => boxMask(64, 8, x, 0, 4));
+    const agreement = compareMaskSets(baseline, variant, 0.1);
+
+    expect(agreement.matched).toBe(4);
+    expect(agreement.medianIou).toBeCloseTo(1 / 3, 6);
+    expect(agreement.medianIou).not.toBeCloseTo((1 / 3 + 0.6) / 2, 6);
+    expect(agreement.minIou).toBeCloseTo(1 / 7, 6);
+  });
+
   it('gives each baseline mask its best unclaimed partner', () => {
     // Two baseline boxes; the variant lists the far one first, so a
     // positional zip would mispair them and score ~0.

@@ -146,6 +146,12 @@ export interface MaskAgreement {
   unmatchedVariant: number;
   /** Over the matched pairs only; 0 when nothing matched. */
   meanIou: number;
+  /**
+   * The LOWER median: with an even number of matches this is the lower of the
+   * two middle IoUs, not their average. Every value here is an IoU that was
+   * actually measured on a real pair of masks, which is what a human reading
+   * the table wants; an averaged midpoint would be a number no pair scored.
+   */
   medianIou: number;
   minIou: number;
   floor: number;
@@ -162,6 +168,8 @@ export interface MaskAgreement {
  *
  * IoU comes from `pairwiseIoU` in `src/segmenter/core` — the one definition.
  * `RawMask` is structurally a `BinaryMask`, so it passes straight in.
+ *
+ * `medianIou` is the lower median on an even match count — see the field.
  */
 export function compareMaskSets(
   baseline: readonly RawMask[],

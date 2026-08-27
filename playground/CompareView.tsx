@@ -28,13 +28,23 @@ export function CompareView() {
   const [imageUrl, setImageUrl] = useState<string>(sampleUrl);
   const [chosenBatchSize, setChosenBatchSize] = useState<number>(DEFAULT_CHOSEN_BATCH_SIZE);
   const [results, setResults] = useState<Record<string, CompareResult>>({});
-  const [errors, setErrors] = useState<Record<string, { phase: string; message: string }>>({});
+  const [errors, setErrors] = useState<
+    Record<string, { phase: string; message: string; discardedResult: boolean }>
+  >({});
   const [runningRowId, setRunningRowId] = useState<string | null>(null);
   const [sweeping, setSweeping] = useState(false);
   const [progress, setProgress] = useState<SegmenterProgress | null>(null);
   const [copied, setCopied] = useState(false);
   const segmenterRef = useRef<ReturnType<typeof createSegmenter> | null>(null);
   const objectUrlRef = useRef<string | null>(null);
+  // Mirrors `results` so `runOne` can tell whether a failing row is throwing
+  // away numbers it had, without taking `results` as a dependency (that would
+  // rebuild `runOne` mid-sweep and strand `runAll` on a stale closure).
+  const resultsRef = useRef(results);
+
+  useEffect(() => {
+    resultsRef.current = results;
+  }, [results]);
 
   useEffect(
     () => () => {
@@ -70,12 +80,24 @@ export function CompareView() {
         setResults((current) => ({ ...current, [row.id]: result }));
       } catch (thrown) {
         const failure = thrown instanceof SegmenterFailure ? thrown : null;
+        const discardedResult = row.id in resultsRef.current;
+        // A failed re-run supersedes whatever the row held: drop it, so no
+        // stale timing can be read off the table or exported by `toMarkdown`
+        // as if it were current. The row falls back to its error branch.
+        if (discardedResult) {
+          setResults((current) => {
+            const next = { ...current };
+            delete next[row.id];
+            return next;
+          });
+        }
         // Recorded against this row only — one bad row must not abort the sweep.
         setErrors((current) => ({
           ...current,
           [row.id]: {
             phase: failure?.phase ?? 'unknown',
             message: thrown instanceof Error ? thrown.message : String(thrown),
+            discardedResult,
           },
         }));
       } finally {
@@ -210,9 +232,14 @@ export function CompareView() {
         </thead>
         <tbody>
           {COMPARE_ROWS.map((row) => {
-            const options = rowOptions(row, chosenBatchSize);
             const result = results[row.id];
             const error = errors[row.id];
+            // A measured row is labelled by the options it was measured under,
+            // never by the current select — otherwise flipping the select
+            // relabels numbers taken at the old batch size, and the table
+            // contradicts the markdown, which reads `result.options`. Only a
+            // row with no result previews what a run WOULD measure.
+            const options = result ? result.options : rowOptions(row, chosenBatchSize);
             return (
               <tr key={row.id} data-testid={`compare-${row.id}`}>
                 <th align="left" scope="row">{row.id}</th>
@@ -232,6 +259,9 @@ export function CompareView() {
                     {error ? (
                       <span role="alert">
                         failed in <strong>{error.phase}</strong>: {error.message}
+                        {error.discardedResult
+                          ? ' — the earlier numbers for this row were discarded; run it again.'
+                          : ''}
                       </span>
                     ) : (
                       'not run'
