@@ -153,6 +153,19 @@ function packedIoU(a: PreparedMask, b: PreparedMask, width: number): number {
  * easy to end up in by accident, and a required parameter makes the compiler
  * say so instead.
  *
+ * `width` must be a POSITIVE INTEGER. It is a contract, not a validated input:
+ * there is no runtime check, and a zero or negative `width` is silently wrong
+ * rather than loud. Negative widths make `y` DECREASE as the flat index
+ * ascends, so `prepareMask`'s `y > y1` never fires, the y-extent collapses to
+ * the first covered pixel's row, and the bbox test then rejects genuinely
+ * overlapping pairs — a wrong kept set, with nothing said about it.
+ *
+ * The pleasant flip side: ANY positive integer works. `width` need not be the
+ * true image width for the result to be exact, because flat index <-> (x, y) is
+ * a bijection for any positive width, so a disjoint bbox still proves no shared
+ * pixel and the scanned word range is still a superset of the real overlap. A
+ * wrong-but-positive `width` costs performance, never correctness.
+ *
  * Returns the kept original indices in ascending order. Identical, for every
  * input, to `dedupeMasksReference` — see the differential test.
  */

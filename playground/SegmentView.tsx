@@ -182,7 +182,7 @@ export function SegmentView() {
         </label>
         {' '}
         <label>
-          compare NMS:{' '}
+          compare NMS (~100x slower nms stage):{' '}
           <input
             data-testid="compare-nms"
             type="checkbox"
@@ -324,7 +324,9 @@ export function SegmentView() {
               {result.nmsComparison.fastMs > 0 &&
                 ` (${(result.nmsComparison.referenceMs / result.nmsComparison.fastMs).toFixed(1)}x)`}
               . kept sets{' '}
-              <strong>{result.nmsComparison.identical ? 'identical' : 'DIFFERENT'}</strong>.
+              <strong>{result.nmsComparison.identical ? 'identical' : 'DIFFERENT'}</strong>. The
+              total row above includes the reference run; the nms phase row does not, so the
+              two will not reconcile in A/B mode.
             </p>
           )}
         </>

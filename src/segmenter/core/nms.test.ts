@@ -147,11 +147,20 @@ describe('dedupeMasks matches dedupeMasksReference', () => {
   });
 
   // The differential. 300 overlapping rectangles on a 2-D canvas, seeded so a
-  // failure reproduces. 64 x 48 rather than a literal full-resolution canvas:
+  // failure reproduces. 61 x 48 rather than a literal full-resolution canvas:
   // the reference is O(pairs x pixels) byte reads, and real 617 x 0.7 MB
   // candidates would put minutes into every CI run for no extra coverage of
   // the two transformations under test.
-  const CANVAS_W = 64;
+  //
+  // The width is deliberately NOT a multiple of 32. At a multiple of 32 every
+  // row starts on a word boundary and the coverage length is a whole number of
+  // words, so `first` and `last` land exactly on the shared row band's edges
+  // and no word ever straddles it — which is precisely the case `packedIoU`'s
+  // "extra bits pulled in by a boundary word cannot be set in both masks"
+  // argument exists for. 61 gives a partial tail word (61 x 48 = 2928 pixels,
+  // 92 words) and rows that start mid-word, folding both into the 300-candidate
+  // 6-threshold differential instead of leaving them to the canned 7 x 5 case.
+  const CANVAS_W = 61;
   const CANVAS_H = 48;
   const candidates = (() => {
     const random = mulberry32(0x5eed1234);

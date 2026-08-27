@@ -48,9 +48,14 @@ export interface SegmenterOptions {
   dtype: 'fp32' | 'fp16' | 'q8';
   /**
    * Run the pre-optimization byte-wise NMS alongside the fast one and report
-   * both times plus whether they kept the identical set. Off by default: it
-   * roughly doubles the `nms` stage, and exists so the speedup can be measured
-   * on a real image rather than argued about.
+   * both times plus whether they kept the identical set. Off by default, and
+   * deliberately so: the reference is on the order of 100x slower than the
+   * fast path (the exact ratio depends on candidate count and mask size), so
+   * ticking this multiplies the `nms` stage by roughly that factor — a minute
+   * or more at `pointsPerSide` 32, with no progress event emitted until the
+   * reference run finishes. That long silence is the option working, not a
+   * hung worker. It exists so the speedup can be measured on a real image
+   * rather than argued about.
    */
   compareNms: boolean;
 }
