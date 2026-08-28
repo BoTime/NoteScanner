@@ -85,6 +85,7 @@
     "test:browser": "playwright test",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.playground.json",
     "playground": "vite --config playground/vite.config.ts",
+    "sweep:decode": "node scripts/sweep-decode.mjs",
     "smoke": "npm run build && node scripts/smoke-build.mjs",
     "prepublishOnly": "npm run build",
     "prepack": "node scripts/prepack-exports.mjs",
