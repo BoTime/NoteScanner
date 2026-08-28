@@ -116,7 +116,7 @@ describe('createSegmenter', () => {
     const workerTimings = createTimingAccumulator();
     workerTimings.recordFilterSub('select', 4);
     workerTimings.recordFilterSub('select', 6);
-    workerTimings.recordFilterSub('upscale', 100);
+    workerTimings.recordFilterSub('resample', 100);
 
     const segmenter = createSegmenter({ createWorker: spawn });
     const pending = segmenter.segment(fakeBitmap());
@@ -130,14 +130,38 @@ describe('createSegmenter', () => {
     });
 
     const result = await pending;
+    // Every sub-step key survives the rebuild, in order, with the worker's
+    // own numbers. The zero-fill rule itself belongs to the accumulator and
+    // is tested where it lives, in `core/timing.test.ts`.
     expect(Object.keys(result.timings.filterSubPhases)).toEqual([...FILTER_SUBSTEP_ORDER]);
     expect(result.timings.filterSubPhases.select.total).toBe(10);
     expect(result.timings.filterSubPhases.select.p50).toBe(6);
-    expect(result.timings.filterSubPhases.upscale.total).toBe(100);
-    expect(result.timings.filterSubPhases.upscale.p50).toBe(100);
-    // The main thread contributes nothing to `filter`, so an unrecorded
-    // sub-step still arrives zero-filled rather than missing.
-    expect(result.timings.filterSubPhases.threshold.count).toBe(0);
+    expect(result.timings.filterSubPhases.resample.total).toBe(100);
+    expect(result.timings.filterSubPhases.resample.p50).toBe(100);
+  });
+
+  it('rebuilds a zero row for a sub-step the worker never recorded', async () => {
+    const workerTimings = createTimingAccumulator();
+    workerTimings.recordFilterSub('select', 7);
+
+    const segmenter = createSegmenter({ createWorker: spawn });
+    const pending = segmenter.segment(fakeBitmap());
+    FakeWorker.instances[0].emit({
+      type: 'done',
+      masks: [],
+      width: 2,
+      height: 1,
+      timings: workerTimings.report(42),
+      counts: { raw: 24, afterFilter: 0, afterNms: 0 },
+    });
+
+    const result = await pending;
+    // A batch that selects no masks never calls `recordSub('resample')`, so
+    // the report the main thread rebuilds has to carry that sub-step through
+    // as a zero row rather than dropping the key. `core/timing.test.ts` covers
+    // the accumulator minting that row; this covers the rebuild preserving it.
+    expect(result.timings.filterSubPhases.resample.count).toBe(0);
+    expect(result.timings.filterSubPhases.resample.total).toBe(0);
   });
 
   it('maps each encoded mask into a ViewerSegment without re-encoding', async () => {
