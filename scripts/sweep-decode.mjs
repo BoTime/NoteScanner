@@ -50,6 +50,42 @@ function die(message) {
   process.exit(1);
 }
 
+/**
+ * Mirrors `BATCH_SIZE_CHOICES` / `POINTS_PER_SIDE_CHOICES` from
+ * `playground/CompareView.tsx` — the exact values the Compare tab's
+ * `<select data-testid="batch-size">` / `<select data-testid="points-per-side">`
+ * controls render as `<option>`s. `resolveConfig`'s own validation only checks
+ * that config values are positive integers, so a `--config` file asking for a
+ * batch size or points-per-side the tab doesn't offer (e.g. `pointsPerSide: [8]`)
+ * passes that check and would otherwise only fail inside `page.selectOption`
+ * deep into the row loop — after however many earlier rows already burned real
+ * GPU minutes. Keep these two lists in sync with CompareView.tsx BY HAND: there
+ * is no import path from this Node script into a TSX file's local constants
+ * (and adding one would be exactly the "second copy of sweep logic" this file's
+ * header comment says not to create).
+ */
+const TAB_BATCH_SIZE_CHOICES = [8, 16, 32, 64];
+const TAB_POINTS_PER_SIDE_CHOICES = [16, 32];
+
+function assertConfigMatchesTabControls(config) {
+  for (const value of config.batchSizes) {
+    if (!TAB_BATCH_SIZE_CHOICES.includes(value)) {
+      die(
+        `config batchSizes contains ${value}, which the Compare tab's control doesn't offer ` +
+          `(only ${TAB_BATCH_SIZE_CHOICES.join(', ')}) — page.selectOption would fail on it deep into the sweep`,
+      );
+    }
+  }
+  for (const value of config.pointsPerSide) {
+    if (!TAB_POINTS_PER_SIDE_CHOICES.includes(value)) {
+      die(
+        `config pointsPerSide contains ${value}, which the Compare tab's control doesn't offer ` +
+          `(only ${TAB_POINTS_PER_SIDE_CHOICES.join(', ')}) — page.selectOption would fail on it deep into the sweep`,
+      );
+    }
+  }
+}
+
 async function probeAdapter(page) {
   return page.evaluate(async () => {
     const gpu = navigator.gpu;
@@ -169,6 +205,12 @@ async function main() {
       ({ overrides, flags }) => window.__decodeSweep.resolveConfig(overrides, flags),
       { overrides, flags: { full: args.full, reps: args.reps } },
     );
+    // Fail fast on a config the tab's own controls can't drive, BEFORE
+    // expandGrid and the row loop below spend any GPU time. This is as early
+    // as the check can run: `resolveConfig` only exists inside the page (see
+    // the file header — its logic is deliberately not duplicated here), so
+    // the fully-resolved config isn't known until the line above.
+    assertConfigMatchesTabControls(config);
     const rows = await page.evaluate((config) => {
       const rows = window.__decodeSweep.expandGrid(config);
       // The warm-up runs first and is discarded: the first run in a page pays
@@ -180,7 +222,41 @@ async function main() {
     const records = [];
     for (const row of rows) {
       process.stdout.write(`${row.id} … `);
-      const record = await runOneRow(page, row);
+      let record;
+      try {
+        record = await runOneRow(page, row);
+      } catch (error) {
+        // A `SegmenterFailure` inside the worker never lands here — CompareView
+        // already catches that itself and resolves with a `status: 'failed'`
+        // record, which is the branch below. What DOES land here is the
+        // harness breaking: `waitForFunction` hitting ROW_TIMEOUT_MS (a real
+        // hang, or a page/worker crash the promise never resolves from), or
+        // `selectOption`/`setChecked` being handed a value the tab's control
+        // doesn't render.
+        const message = String(error?.message ?? error);
+        if (row.warmUp) {
+          // The warm-up exists to pay cold shader compilation and a cold HTTP
+          // cache ONCE so no measured row absorbs it. If even the warm-up
+          // can't complete, the harness itself is broken (bad selector, wedged
+          // page, crashed worker) — not one unsupported config among sixteen.
+          // Continuing would run the whole grid against a page that already
+          // proved it can't finish a single row, producing sixteen more
+          // failures instead of one clear one. So abort here rather than push
+          // a record: there is no measured-rows array entry for a warm-up row
+          // even on success, and there shouldn't be one on failure either.
+          console.log('FAILED (harness error)');
+          die(`warm-up row failed, aborting sweep: ${message}`);
+        }
+        console.log(`FAILED (harness error): ${message}`);
+        records.push({
+          rowId: row.id,
+          options: row.options,
+          status: 'failed',
+          phase: 'unknown',
+          message,
+        });
+        continue;
+      }
       if (row.warmUp) {
         console.log('discarded (warm-up)');
         continue;
