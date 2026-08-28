@@ -22,8 +22,12 @@ export type SegmentationPhase = (typeof PHASE_ORDER)[number];
  * `SegmenterFailure.phase`, so widening it would admit values that can never
  * be thrown, and summing the results table's total column would count
  * `filter` twice.
+ *
+ * `resample` is one region, not two: the upsample and the threshold are a
+ * single fused loop in `resampleThresholdMask`, and reporting them separately
+ * would ship a permanently-zero row.
  */
-export const FILTER_SUBSTEP_ORDER = ['select', 'upscale', 'threshold'] as const;
+export const FILTER_SUBSTEP_ORDER = ['select', 'resample'] as const;
 
 export type FilterSubstep = (typeof FILTER_SUBSTEP_ORDER)[number];
 

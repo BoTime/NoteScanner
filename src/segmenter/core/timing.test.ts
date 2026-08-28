@@ -72,14 +72,14 @@ describe('createTimingAccumulator filter sub-steps', () => {
 
   it('accumulates repeated samples for one sub-step', () => {
     const timings = createTimingAccumulator();
-    timings.recordFilterSub('upscale', 10);
-    timings.recordFilterSub('upscale', 30);
-    timings.recordFilterSub('upscale', 20);
+    timings.recordFilterSub('resample', 10);
+    timings.recordFilterSub('resample', 30);
+    timings.recordFilterSub('resample', 20);
     const report = timings.report(60);
-    expect(report.filterSubPhases.upscale.count).toBe(3);
-    expect(report.filterSubPhases.upscale.p50).toBe(20);
-    expect(report.filterSubPhases.upscale.max).toBe(30);
-    expect(report.filterSubPhases.upscale.total).toBe(60);
+    expect(report.filterSubPhases.resample.count).toBe(3);
+    expect(report.filterSubPhases.resample.p50).toBe(20);
+    expect(report.filterSubPhases.resample.max).toBe(30);
+    expect(report.filterSubPhases.resample.total).toBe(60);
     expect(report.filterSubPhases.select.count).toBe(0);
   });
 
@@ -90,23 +90,21 @@ describe('createTimingAccumulator filter sub-steps', () => {
     const report = timings.report(100);
     expect(report.phases.filter.total).toBe(100);
     expect(report.filterSubPhases.select.total).toBe(3);
-    expect(report.filterSubPhases.threshold.total).toBe(0);
+    expect(report.filterSubPhases.resample.total).toBe(0);
   });
 
-  // The no-residual invariant: the worker's three regions are drawn to be
+  // The no-residual invariant: the worker's two regions are drawn to be
   // exhaustive and non-overlapping across the stage, so their totals sum to
   // the filter total. A residual is exactly what would muddy the percentage
   // breakdown this instrumentation exists to produce.
-  it('has the three sub-step totals sum to the filter total with no residual', () => {
+  it('has the two sub-step totals sum to the filter total with no residual', () => {
     const timings = createTimingAccumulator();
     timings.record('filter', 100);
     timings.recordFilterSub('select', 3);
-    timings.recordFilterSub('upscale', 80);
-    timings.recordFilterSub('threshold', 17);
+    timings.recordFilterSub('resample', 97);
     timings.record('filter', 50);
     timings.recordFilterSub('select', 2);
-    timings.recordFilterSub('upscale', 40);
-    timings.recordFilterSub('threshold', 8);
+    timings.recordFilterSub('resample', 48);
     const report = timings.report(150);
     const subTotal = FILTER_SUBSTEP_ORDER.reduce(
       (sum, step) => sum + report.filterSubPhases[step].total,

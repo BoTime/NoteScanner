@@ -9,10 +9,11 @@
  * import `/segmenter`.
  *
  * Pipeline: load once -> encode the image once -> decode the prompt grid in
- * batches -> filter each batch at LOW resolution -> upscale only the survivors
- * -> NMS across everything. Filtering before upscaling is not an optimization
- * detail: a batch of 8 points yields 24 low-res masks, and upscaling all of
- * them to full image resolution as float32 is hundreds of megabytes per batch.
+ * batches -> filter each batch at LOW resolution -> resample only the
+ * survivors straight to binary masks -> NMS across everything. Filtering
+ * before resampling is not an optimization detail: a batch of 8 points yields
+ * 24 low-res masks, and taking all of them to full image resolution is
+ * hundreds of megabytes per batch.
  */
 import {
   AutoProcessor,
@@ -28,8 +29,8 @@ import {
   createTimingAccumulator,
   dedupeMasks,
   encodeMaskPng,
+  resampleThresholdMask,
   stabilityScore,
-  thresholdMask,
   type BinaryMask,
   type EncodedMask,
   type FilterSubstep,
@@ -61,6 +62,36 @@ function post(message: SegmenterResponse, transfer?: Transferable[]): void {
 interface Session {
   model: SamModel;
   processor: SamProcessor;
+}
+
+interface PadSize {
+  height: number;
+  width: number;
+}
+
+/**
+ * The pad size the processor actually applied, resolved the way
+ * `post_process_masks` resolves it internally (`pad_size ?? size`, each
+ * `{height, width}`).
+ *
+ * Read at runtime rather than hardcoded to 1024: the fused resample's geometry
+ * is only correct for the pad the processor used, and a different SAM
+ * checkpoint may ship a different one. Both fields are typed `any` upstream,
+ * so this narrows them itself rather than trusting the declaration.
+ */
+function resolvePadSize(processor: SamProcessor): PadSize {
+  const imageProcessor = processor.image_processor as
+    | { pad_size?: unknown; size?: unknown }
+    | undefined;
+  const candidate = imageProcessor?.pad_size ?? imageProcessor?.size;
+  const size = candidate as Partial<PadSize> | undefined;
+  if (!size || typeof size.height !== 'number' || typeof size.width !== 'number') {
+    throw new Error(
+      'processor exposes neither image_processor.pad_size nor image_processor.size ' +
+        'as {height, width}; cannot compute mask resample geometry',
+    );
+  }
+  return { height: size.height, width: size.width };
 }
 
 /**
@@ -123,7 +154,10 @@ async function run(request: SegmenterRequest): Promise<void> {
     // `original_sizes` and `reshaped_input_sizes` are [height, width].
     const [originalHeight, originalWidth] = originalSizes[0];
     const [reshapedHeight, reshapedWidth] = reshapedSizes[0];
-    const fullPixels = originalHeight * originalWidth;
+    // `phase` is still 'encode' here, so a processor with no usable pad size
+    // surfaces as SegmenterFailure('encode', ...) — which is where the
+    // processor came from — rather than as an unattributed throw.
+    const { width: padWidth, height: padHeight } = resolvePadSize(processor);
 
     const batches = batchPoints(buildPointGrid(options.pointsPerSide), options.batchSize);
     const candidates: BinaryMask[] = [];
@@ -168,7 +202,7 @@ async function run(request: SegmenterRequest): Promise<void> {
       phase = 'filter';
       started = performance.now();
       // A second cursor for the sub-regions. Each region ends exactly where
-      // the next begins, so the three sum to the stage total.
+      // the next begins, so the two sum to the stage total.
       let subStarted = started;
       const recordSub = (step: FilterSubstep) => {
         const now = performance.now();
@@ -213,32 +247,25 @@ async function run(request: SegmenterRequest): Promise<void> {
       recordSub('select');
 
       if (chosen.length > 0) {
-        const selected = new Float32Array(chosen.length * lowPixels);
+        // One call per surviving mask, straight from its low-res window to a
+        // binary mask: no staging copy, no 5-D tensor, no ORT round-trip, no
+        // padded-resolution intermediate and no full-resolution float buffer.
         for (let k = 0; k < chosen.length; k += 1) {
-          selected.set(
-            logits.subarray(chosen[k] * lowPixels, (chosen[k] + 1) * lowPixels),
-            k * lowPixels,
-          );
-        }
-        // post_process_masks indexes `masks[0]`, so a 5-D tensor shaped
-        // [1, K, 1, lowH, lowW] gives it the 4-D [K, 1, lowH, lowW] batch it
-        // wants and comes back as one [K, 1, origH, origW] tensor.
-        const upscaled = await processor.post_process_masks(
-          new Tensor('float32', selected, [1, chosen.length, 1, lowHeight, lowWidth]),
-          originalSizes,
-          reshapedSizes,
-          { binarize: false },
-        );
-        const full = upscaled[0].data as Float32Array;
-        recordSub('upscale');
-        for (let k = 0; k < chosen.length; k += 1) {
-          const mask = thresholdMask(
-            full.subarray(k * fullPixels, (k + 1) * fullPixels),
-            options.maskThreshold,
-          );
+          const mask = resampleThresholdMask({
+            logits: logits.subarray(chosen[k] * lowPixels, (chosen[k] + 1) * lowPixels),
+            lowWidth,
+            lowHeight,
+            padWidth,
+            padHeight,
+            reshapedWidth,
+            reshapedHeight,
+            originalWidth,
+            originalHeight,
+            threshold: options.maskThreshold,
+          });
           if (mask.area >= options.minMaskArea) candidates.push(mask);
         }
-        recordSub('threshold');
+        recordSub('resample');
       }
       timings.record('filter', performance.now() - started);
 
