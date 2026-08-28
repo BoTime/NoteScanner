@@ -83,7 +83,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:browser": "playwright test",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.playground.json",
     "playground": "vite --config playground/vite.config.ts",
     "smoke": "npm run build && node scripts/smoke-build.mjs",
     "prepublishOnly": "npm run build",
