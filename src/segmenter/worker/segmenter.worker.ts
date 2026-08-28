@@ -35,6 +35,7 @@ import {
   type EncodedMask,
   type FilterSubstep,
   type NmsComparison,
+  type RawMask,
   type SegmentationPhase,
   type SegmenterOptions,
   type SegmenterRequest,
@@ -44,6 +45,8 @@ import {
 // Not on the `note-scanner/segmenter` surface by design, so it is imported
 // from the module rather than from the barrel.
 import { dedupeMasksReference } from '../core/nms';
+
+import { embeddingsSessionOptions, sessionCacheKey } from './session-key';
 
 /**
  * `globalThis` is typed as a `Window` under this package's `lib: ["dom", ...]`,
@@ -103,12 +106,16 @@ let session: Session | null = null;
 let sessionKey = '';
 
 async function loadSession(options: SegmenterOptions): Promise<Session> {
-  const key = `${options.modelId}|${options.dtype}`;
+  const key = sessionCacheKey(options);
   if (session && sessionKey === key) return session;
 
+  const sessionOptions = embeddingsSessionOptions(options);
   const model = (await SamModel.from_pretrained(options.modelId, {
     device: 'webgpu',
     dtype: options.dtype,
+    // Spread rather than passed as `undefined`, so the default path hands
+    // transformers.js exactly the options object it gets today.
+    ...(sessionOptions ? { session_options: sessionOptions } : {}),
   })) as unknown as SamModel;
   const processor = (await AutoProcessor.from_pretrained(
     options.modelId,
@@ -163,13 +170,12 @@ async function run(request: SegmenterRequest): Promise<void> {
     const candidates: BinaryMask[] = [];
     let rawCount = 0;
 
-    for (let b = 0; b < batches.length; b += 1) {
-      const batch = batches[b];
-      const batchStarted = performance.now();
-
-      // ---- decode ----
-      phase = 'decode';
-      started = performance.now();
+    /**
+     * Build one batch's prompt tensors and ISSUE the model call without
+     * awaiting it. Tensor construction lives in here rather than at the call
+     * site so that its CPU cost is attributed to `decode` on both paths.
+     */
+    const dispatch = (batch: readonly [number, number][]) => {
       // The processor's own `reshape_input_points` scales ORIGINAL-space points
       // by reshaped/original. Our grid is already normalized, so multiplying by
       // the reshaped size directly lands in the same place with one less step.
@@ -186,98 +192,158 @@ async function run(request: SegmenterRequest): Promise<void> {
         new BigInt64Array(batch.length).fill(1n),
         [1, batch.length, 1],
       );
-      const outputs = await model({
+      return model({
         ...embeddings,
         input_points: inputPoints,
         input_labels: inputLabels,
       });
-      // `.to('float32')` is a no-op on an fp32 model and the required
-      // conversion on an fp16 one, where ORT hands back raw float16 bits in a
-      // Uint16Array on runtimes with no Float16Array.
-      const predMasks = outputs.pred_masks.to('float32') as Tensor;
-      const iouScores = outputs.iou_scores.to('float32') as Tensor;
-      timings.record('decode', performance.now() - started);
+    };
 
-      // ---- filter, at low resolution ----
-      phase = 'filter';
-      started = performance.now();
-      // A second cursor for the sub-regions. Each region ends exactly where
-      // the next begins, so the two sum to the stage total.
-      let subStarted = started;
-      const recordSub = (step: FilterSubstep) => {
-        const now = performance.now();
-        timings.recordFilterSub(step, now - subStarted);
-        subStarted = now;
-      };
-      // dims: [1, point_batch_size, masks_per_point, lowHeight, lowWidth].
-      // Read them off the tensor rather than hardcoding 3 x 256 x 256.
-      const dims = predMasks.dims;
-      const pointCount = dims[1];
-      const masksPerPoint = dims[2];
-      const lowHeight = dims[3];
-      const lowWidth = dims[4];
-      const lowPixels = lowHeight * lowWidth;
-      const logits = predMasks.data as Float32Array;
-      const scores = iouScores.data as Float32Array;
+    phase = 'decode';
+    /**
+     * The decode sample's clock.
+     *
+     * CONVENTION, because the two paths measure different regions and a reader
+     * will assume otherwise. Both record exactly `batches.length` samples.
+     *   - serial: the sample is today's exact region — tensor build + `await`.
+     *   - overlapped: the sample runs from the end of the PREVIOUS batch's
+     *     filter block, through the `await` of this batch's already-in-flight
+     *     dispatch, to the moment the NEXT batch's dispatch has been issued.
+     *     For b = 0 it starts just before the priming dispatch below, so batch
+     *     0's tensor construction is inside the first sample.
+     * On the overlapped path the sample is therefore dominated by WAITING: a
+     * near-zero decode means the GPU finished during the previous filter block,
+     * not that the work vanished.
+     */
+    let decodeStarted = performance.now();
+    /**
+     * The next batch's dispatch, kept in flight across the current batch's
+     * filter block. Null on the serial path and after the last batch.
+     */
+    let pending: ReturnType<typeof dispatch> | null =
+      options.overlapDecodeFilter && batches.length > 0 ? dispatch(batches[0]) : null;
 
-      // One mask per prompt point: the most confident of the three that is
-      // also stable. SAM emits three to disambiguate whole/part/subpart, and
-      // keeping all three is how you end up with three copies of everything.
-      const chosen: number[] = [];
-      for (let p = 0; p < pointCount; p += 1) {
-        let bestFlat = -1;
-        let bestScore = -Infinity;
-        for (let m = 0; m < masksPerPoint; m += 1) {
-          const flat = p * masksPerPoint + m;
-          rawCount += 1;
-          const window = logits.subarray(flat * lowPixels, (flat + 1) * lowPixels);
-          const stability = stabilityScore(
-            window,
-            options.maskThreshold,
-            options.stabilityScoreOffset,
-          );
-          if (stability < options.stabilityScoreThreshold) continue;
-          if (scores[flat] > bestScore) {
-            bestScore = scores[flat];
-            bestFlat = flat;
+    try {
+      for (let b = 0; b < batches.length; b += 1) {
+        const batchStarted = performance.now();
+
+        // ---- decode ----
+        phase = 'decode';
+        let outputs;
+        if (options.overlapDecodeFilter) {
+          // Cleared BEFORE the await so a rejection here is handled by the
+          // await alone; the catch below then has nothing to suppress.
+          const inFlight = pending;
+          pending = null;
+          outputs = await inFlight;
+          // Issued before the filter block so the GPU is busy through it.
+          pending = b + 1 < batches.length ? dispatch(batches[b + 1]) : null;
+        } else {
+          // Exactly today's shape: dispatch, immediately awaited.
+          decodeStarted = performance.now();
+          outputs = await dispatch(batches[b]);
+        }
+        // `.to('float32')` is a no-op on an fp32 model and the required
+        // conversion on an fp16 one, where ORT hands back raw float16 bits in a
+        // Uint16Array on runtimes with no Float16Array.
+        const predMasks = outputs.pred_masks.to('float32') as Tensor;
+        const iouScores = outputs.iou_scores.to('float32') as Tensor;
+        timings.record('decode', performance.now() - decodeStarted);
+
+        // ---- filter, at low resolution ----
+        phase = 'filter';
+        started = performance.now();
+        // A second cursor for the sub-regions. Each region ends exactly where
+        // the next begins, so the two sum to the stage total.
+        let subStarted = started;
+        const recordSub = (step: FilterSubstep) => {
+          const now = performance.now();
+          timings.recordFilterSub(step, now - subStarted);
+          subStarted = now;
+        };
+        // dims: [1, point_batch_size, masks_per_point, lowHeight, lowWidth].
+        // Read them off the tensor rather than hardcoding 3 x 256 x 256.
+        const dims = predMasks.dims;
+        const pointCount = dims[1];
+        const masksPerPoint = dims[2];
+        const lowHeight = dims[3];
+        const lowWidth = dims[4];
+        const lowPixels = lowHeight * lowWidth;
+        const logits = predMasks.data as Float32Array;
+        const scores = iouScores.data as Float32Array;
+
+        // One mask per prompt point: the most confident of the three that is
+        // also stable. SAM emits three to disambiguate whole/part/subpart, and
+        // keeping all three is how you end up with three copies of everything.
+        const chosen: number[] = [];
+        for (let p = 0; p < pointCount; p += 1) {
+          let bestFlat = -1;
+          let bestScore = -Infinity;
+          for (let m = 0; m < masksPerPoint; m += 1) {
+            const flat = p * masksPerPoint + m;
+            rawCount += 1;
+            const window = logits.subarray(flat * lowPixels, (flat + 1) * lowPixels);
+            const stability = stabilityScore(
+              window,
+              options.maskThreshold,
+              options.stabilityScoreOffset,
+            );
+            if (stability < options.stabilityScoreThreshold) continue;
+            if (scores[flat] > bestScore) {
+              bestScore = scores[flat];
+              bestFlat = flat;
+            }
           }
+          if (bestFlat >= 0) chosen.push(bestFlat);
         }
-        if (bestFlat >= 0) chosen.push(bestFlat);
-      }
-      recordSub('select');
+        recordSub('select');
 
-      if (chosen.length > 0) {
-        // One call per surviving mask, straight from its low-res window to a
-        // binary mask: no staging copy, no 5-D tensor, no ORT round-trip, no
-        // padded-resolution intermediate and no full-resolution float buffer.
-        for (let k = 0; k < chosen.length; k += 1) {
-          const mask = resampleThresholdMask({
-            logits: logits.subarray(chosen[k] * lowPixels, (chosen[k] + 1) * lowPixels),
-            lowWidth,
-            lowHeight,
-            padWidth,
-            padHeight,
-            reshapedWidth,
-            reshapedHeight,
-            originalWidth,
-            originalHeight,
-            threshold: options.maskThreshold,
-          });
-          if (mask.area >= options.minMaskArea) candidates.push(mask);
+        if (chosen.length > 0) {
+          // One call per surviving mask, straight from its low-res window to a
+          // binary mask: no staging copy, no 5-D tensor, no ORT round-trip, no
+          // padded-resolution intermediate and no full-resolution float buffer.
+          for (let k = 0; k < chosen.length; k += 1) {
+            const mask = resampleThresholdMask({
+              logits: logits.subarray(chosen[k] * lowPixels, (chosen[k] + 1) * lowPixels),
+              lowWidth,
+              lowHeight,
+              padWidth,
+              padHeight,
+              reshapedWidth,
+              reshapedHeight,
+              originalWidth,
+              originalHeight,
+              threshold: options.maskThreshold,
+            });
+            if (mask.area >= options.minMaskArea) candidates.push(mask);
+          }
+          recordSub('resample');
         }
-        recordSub('resample');
-      }
-      timings.record('filter', performance.now() - started);
+        timings.record('filter', performance.now() - started);
 
-      post({
-        type: 'progress',
-        event: {
-          phase: 'decode',
-          done: b + 1,
-          total: batches.length,
-          ms: performance.now() - batchStarted,
-        },
-      });
+        post({
+          type: 'progress',
+          event: {
+            phase: 'decode',
+            done: b + 1,
+            total: batches.length,
+            ms: performance.now() - batchStarted,
+          },
+        });
+
+        // Starts the NEXT overlapped sample's clock. Overwritten on the serial
+        // path before it is read, so it costs that path nothing but a store.
+        decodeStarted = performance.now();
+      }
+    } catch (error) {
+      // A dispatch nobody will ever await must not surface as an unhandled
+      // top-level rejection and drown out the failure that actually killed the
+      // run. Suppress it, then rethrow with `phase` still naming its stage.
+      if (pending) {
+        void pending.catch(() => {});
+        pending = null;
+      }
+      throw error;
     }
 
     // ---- nms: once, across every batch. Adjacent grid points land on the
@@ -330,21 +396,40 @@ async function run(request: SegmenterRequest): Promise<void> {
       masks.push({ maskUrl, area: candidates[index].area });
     }
 
-    // No transfer list, deliberately: `masks` is now strings. Not one coverage
-    // buffer crosses the worker boundary any more.
-    post({
-      type: 'done',
-      masks,
-      width: originalWidth,
-      height: originalHeight,
-      timings: timings.report(performance.now() - startedAt),
-      counts: {
-        raw: rawCount,
-        afterFilter: candidates.length,
-        afterNms: masks.length,
+    // ---- keepRawMasks: the surviving coverage buffers, only when asked for.
+    // Collected AFTER the encode loop above, which reads them locally.
+    //
+    // `thresholdMask` allocates a fresh Uint8Array per mask, so every coverage
+    // owns its own ArrayBuffer: no buffer can appear twice in this transfer
+    // list (postMessage throws on a duplicate) and none is aliased elsewhere.
+    const rawMasks: RawMask[] = options.keepRawMasks
+      ? kept.map((index) => ({
+          coverage: candidates[index].coverage,
+          area: candidates[index].area,
+        }))
+      : [];
+    // With the flag off this is empty and the call below is byte-for-byte
+    // today's: `masks` is strings, and not one coverage buffer crosses the
+    // worker boundary.
+    const transfer = rawMasks.map((mask) => mask.coverage.buffer as ArrayBuffer);
+
+    post(
+      {
+        type: 'done',
+        masks,
+        width: originalWidth,
+        height: originalHeight,
+        timings: timings.report(performance.now() - startedAt),
+        counts: {
+          raw: rawCount,
+          afterFilter: candidates.length,
+          afterNms: masks.length,
+        },
+        ...(nmsComparison ? { nmsComparison } : {}),
+        ...(options.keepRawMasks ? { rawMasks } : {}),
       },
-      ...(nmsComparison ? { nmsComparison } : {}),
-    });
+      transfer.length > 0 ? transfer : undefined,
+    );
   } catch (error) {
     post({
       type: 'error',

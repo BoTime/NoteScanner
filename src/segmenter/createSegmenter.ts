@@ -128,6 +128,10 @@ export function createSegmenter(config: CreateSegmenterConfig = {}): Segmenter {
             },
             counts: message.counts,
             nmsComparison: message.nmsComparison,
+            // Spread, not a bare `rawMasks: message.rawMasks`: the field is
+            // absent unless the run asked for it, and an explicit `undefined`
+            // would make `'rawMasks' in result` true for every run.
+            ...(message.rawMasks ? { rawMasks: message.rawMasks } : {}),
           });
         };
 

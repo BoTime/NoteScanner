@@ -62,6 +62,48 @@ export interface SegmenterOptions {
    * rather than argued about.
    */
   compareNms: boolean;
+  /**
+   * Keep the next batch's model dispatch in flight while the current batch's
+   * filter block runs on the CPU.
+   *
+   * This does NOT make decode faster. The batch loop is serial today — the GPU
+   * is idle for the whole filter block and the CPU is idle for the whole model
+   * call — and overlapping them moves time BETWEEN the stage counters. When
+   * the GPU finished during the previous filter block, `decode` collapses
+   * toward zero: the work still happened, it simply stopped being counted
+   * anywhere. Anything ranking these runs must rank on wall clock.
+   *
+   * Peak memory rises by one batch of `pred_masks` (at `batchSize` 32 that
+   * tensor is ~25 MB fp32, so ~50 MB with two in flight). A configuration that
+   * exhausts memory fails the run rather than degrading quietly.
+   */
+  overlapDecodeFilter: boolean;
+  /**
+   * Ask the runtime to leave the encoder's `image_embeddings` and
+   * `image_positional_embeddings` on the device instead of copying them back
+   * to the CPU, so the decoder does not re-upload ~8 MB on every dispatch.
+   *
+   * Nothing may read `.data` on those two tensors while this is on — the
+   * worker only forwards them into `model(...)`, which is what makes the path
+   * possible at all. `pred_masks` and `iou_scores` are deliberately left on
+   * the CPU, because the filter stage reads `pred_masks.data`.
+   *
+   * There is NO CPU fallback. If the runtime rejects a GPU-resident input the
+   * run fails, naming its phase; a silent fallback would report a fast row
+   * that measured the very path it was supposed to replace.
+   */
+  gpuResidentEmbeddings: boolean;
+  /**
+   * Additionally post the surviving masks' full-resolution coverage buffers
+   * back on `SegmentationResult.rawMasks`, transferred rather than cloned.
+   *
+   * Off by default because a caller holding the result in React state pins
+   * tens of megabytes: ~50 coverage arrays at ~0.7 MB each at 16 points per
+   * side. It exists so one run's masks can be compared against another's, and
+   * for nothing else. It changes nothing about the ONNX sessions and therefore
+   * must never enter the worker's session cache key.
+   */
+  keepRawMasks: boolean;
 }
 
 /**
@@ -84,6 +126,9 @@ export const DEFAULT_SEGMENTER_OPTIONS: SegmenterOptions = {
   modelId: 'Xenova/slimsam-77-uniform',
   dtype: 'fp32',
   compareNms: false,
+  overlapDecodeFilter: false,
+  gpuResidentEmbeddings: false,
+  keepRawMasks: false,
 };
 
 export interface PhaseTiming {
@@ -147,6 +192,8 @@ export interface SegmentationResult {
   counts: SegmentationCounts;
   /** Present only when `compareNms` was set. */
   nmsComparison?: NmsComparison;
+  /** Present only when the run asked for `keepRawMasks`. */
+  rawMasks?: RawMask[];
 }
 
 /** A failure that names the phase it died in, so the UI can say where. */
@@ -170,6 +217,18 @@ export interface EncodedMask {
   area: number;
 }
 
+/**
+ * A surviving mask's raw coverage, at full image resolution.
+ *
+ * Structurally a `BinaryMask`, so it passes straight into `pairwiseIoU`. Only
+ * posted when `keepRawMasks` is set; the coverage buffers are TRANSFERRED, so
+ * the worker's own copies are detached once the `done` message is sent.
+ */
+export interface RawMask {
+  coverage: Uint8Array;
+  area: number;
+}
+
 export type SegmenterRequest = {
   type: 'segment';
   /** Transferred, never cloned. */
@@ -187,5 +246,6 @@ export type SegmenterResponse =
       timings: TimingReport;
       counts: SegmentationCounts;
       nmsComparison?: NmsComparison;
+      rawMasks?: RawMask[];
     }
   | { type: 'error'; phase: SegmentationPhase; message: string };

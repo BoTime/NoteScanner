@@ -6,6 +6,7 @@ import {
   SegmenterFailure,
   createTimingAccumulator,
   type EncodedMask,
+  type RawMask,
   type SegmenterProgress,
   type SegmenterRequest,
   type SegmenterResponse,
@@ -48,7 +49,10 @@ function fakeBitmap() {
   return { width: 4, height: 4, close: vi.fn() } as unknown as ImageBitmap;
 }
 
-function doneMessage(masks: EncodedMask[] = []): SegmenterResponse {
+// Narrowed to the `done` variant rather than the whole union, so a test can
+// spread it and add a field (`rawMasks`) without the compiler losing track of
+// which variant it is.
+function doneMessage(masks: EncodedMask[] = []): Extract<SegmenterResponse, { type: 'done' }> {
   return {
     type: 'done',
     masks,
@@ -329,5 +333,45 @@ describe('createSegmenter', () => {
     const pending = segmenter.segment(fakeBitmap());
     FakeWorker.instances[0].emit(doneMessage());
     expect((await pending).nmsComparison).toBeUndefined();
+  });
+
+  it('defaults all three new flags off and passes each one through (AC1)', async () => {
+    const segmenter = createSegmenter({ createWorker: spawn });
+    const first = segmenter.segment(fakeBitmap());
+    const defaults = FakeWorker.instances[0].posted[0].options;
+    expect(defaults.overlapDecodeFilter).toBe(false);
+    expect(defaults.gpuResidentEmbeddings).toBe(false);
+    expect(defaults.keepRawMasks).toBe(false);
+    FakeWorker.instances[0].emit(doneMessage());
+    await first;
+
+    const second = segmenter.segment(fakeBitmap(), {
+      overlapDecodeFilter: true,
+      gpuResidentEmbeddings: true,
+      keepRawMasks: true,
+    });
+    const sent = FakeWorker.instances[1].posted[0].options;
+    expect(sent.overlapDecodeFilter).toBe(true);
+    expect(sent.gpuResidentEmbeddings).toBe(true);
+    expect(sent.keepRawMasks).toBe(true);
+    FakeWorker.instances[1].emit(doneMessage());
+    await second;
+  });
+
+  it('surfaces rawMasks when the worker sends them, and omits the field otherwise (AC5)', async () => {
+    const rawMasks: RawMask[] = [{ coverage: new Uint8Array([1, 0, 1, 1]), area: 3 }];
+
+    const segmenter = createSegmenter({ createWorker: spawn });
+    const withMasks = segmenter.segment(fakeBitmap(), { keepRawMasks: true });
+    FakeWorker.instances[0].emit({ ...doneMessage(), type: 'done', rawMasks });
+    const kept = await withMasks;
+    expect(kept.rawMasks).toEqual(rawMasks);
+
+    const without = segmenter.segment(fakeBitmap());
+    FakeWorker.instances[1].emit(doneMessage());
+    const plain = await without;
+    // Absent, not `undefined`: a run that did not ask for masks must not carry
+    // the key at all, so `'rawMasks' in result` is a usable question.
+    expect('rawMasks' in plain).toBe(false);
   });
 });
