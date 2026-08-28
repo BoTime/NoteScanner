@@ -140,6 +140,30 @@ describe('createSegmenter', () => {
     expect(result.timings.filterSubPhases.resample.p50).toBe(100);
   });
 
+  it('rebuilds a zero row for a sub-step the worker never recorded', async () => {
+    const workerTimings = createTimingAccumulator();
+    workerTimings.recordFilterSub('select', 7);
+
+    const segmenter = createSegmenter({ createWorker: spawn });
+    const pending = segmenter.segment(fakeBitmap());
+    FakeWorker.instances[0].emit({
+      type: 'done',
+      masks: [],
+      width: 2,
+      height: 1,
+      timings: workerTimings.report(42),
+      counts: { raw: 24, afterFilter: 0, afterNms: 0 },
+    });
+
+    const result = await pending;
+    // A batch that selects no masks never calls `recordSub('resample')`, so
+    // the report the main thread rebuilds has to carry that sub-step through
+    // as a zero row rather than dropping the key. `core/timing.test.ts` covers
+    // the accumulator minting that row; this covers the rebuild preserving it.
+    expect(result.timings.filterSubPhases.resample.count).toBe(0);
+    expect(result.timings.filterSubPhases.resample.total).toBe(0);
+  });
+
   it('maps each encoded mask into a ViewerSegment without re-encoding', async () => {
     // No canvas stub and no encoder stub: the worker already did the work, so
     // the main thread's whole job here is naming the segments.

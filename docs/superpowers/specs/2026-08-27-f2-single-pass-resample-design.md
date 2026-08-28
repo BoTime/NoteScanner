@@ -186,10 +186,15 @@ disc, and an off-centre blob; at minimum one landscape and one portrait
 - coverage IoU between the one-pass and two-pass masks `>= 0.99`, and
 - the two masks' bounding boxes agree within 1 px on all four sides.
 
-The IoU bound tolerates honest resampling drift; the bounding-box check is what
-catches a geometry error, which is the dangerous failure mode here. Record the
-observed max and mean divergence (as a comment or console output the run can
-quote) so the criterion is quantified rather than merely gated.
+The IoU bound is the check that catches a geometry error, which is the
+dangerous failure mode here: an injected half-pixel offset drops it to
+0.9155-0.9450 against the 0.99 gate, where correct output measures 0.99901.
+The bounding-box assertion is only a coarse sanity bound — its max delta is
+already exactly 1 px, the assertion's own limit, on correct output, and it
+stayed at exactly 1 px under that injected offset too — so it must not be
+relied on as the discriminating check. Record the observed max and mean
+divergence (as a comment or console output the run can quote) so the
+criterion is quantified rather than merely gated.
 
 **Unit tests** in the same file for behaviour and degenerate inputs:
 
@@ -245,8 +250,10 @@ Every criterion below is `(non-ui)`. The two criteria stated on issue #8 are
 AC1 and AC2. Neither is observable by driving this package's UI in a browser:
 AC1 is a numerical comparison between two resampling paths, and AC2 needs a
 WebGPU browser downloading SlimSAM weights and a human reading a timing table.
-This repository has no `@playwright/test` dependency and none is being added;
-the vitest environment is `node`.
+The repo does have a Playwright lane (`@playwright/test`,
+`playwright.config.ts`, `tests/browser/`, run in CI), but neither AC1 nor AC2
+has a browser surface it could exercise, so nothing is added to it here; the
+vitest environment for this work is `node`.
 
 - AC1 (non-ui) — **the divergence from the two-pass result is quantified, not
   assumed.** `src/segmenter/core/mask-resample.test.ts` compares
@@ -290,9 +297,11 @@ the vitest environment is `node`.
   present.
 - AC10 (non-ui) — `FILTER_SUBSTEP_ORDER` is `['select', 'resample']`; the
   timing report and the playground's nested sub-rows follow it without a
-  permanently-zero row; the two recorded sub-regions tile the `filter` stage
-  total exactly, with no work between the last `recordSub` and
-  `timings.record('filter', ...)`.
+  permanently-zero row; the recorded sub-regions tile the `filter` stage total
+  exactly, with no work between the last `recordSub` and
+  `timings.record('filter', ...)`. A batch that selects no masks records
+  `select` alone, which then covers the whole stage, so `select.count` and
+  `resample.count` need not match.
 - AC11 (non-ui) — nothing outside F2's scope regresses: `src/renderer/` is
   unchanged, `thresholdMask` and `stabilityScore` remain exported and tested,
   `PHASE_ORDER` / `SegmentationPhase` are unchanged, and the full suite
