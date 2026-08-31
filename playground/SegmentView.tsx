@@ -190,6 +190,26 @@ export function SegmentView() {
             onChange={(e) => patch({ compareNms: e.target.checked })}
           />
         </label>
+        {' '}
+        <label>
+          overlap decode/filter:{' '}
+          <input
+            data-testid="overlap-decode-filter"
+            type="checkbox"
+            checked={options.overlapDecodeFilter}
+            onChange={(e) => patch({ overlapDecodeFilter: e.target.checked })}
+          />
+        </label>
+        {' '}
+        <label>
+          GPU-resident embeddings:{' '}
+          <input
+            data-testid="gpu-resident-embeddings"
+            type="checkbox"
+            checked={options.gpuResidentEmbeddings}
+            onChange={(e) => patch({ gpuResidentEmbeddings: e.target.checked })}
+          />
+        </label>
       </p>
 
       <p
