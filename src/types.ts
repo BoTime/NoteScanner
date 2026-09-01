@@ -36,7 +36,8 @@ export interface SegmentViewerProps {
   onStatusChange?: (status: ViewerStatus) => void;
   /** Menu label for a segment. Defaults to `Segment #N`. */
   formatSegmentLabel?: (segment: ViewerSegment, index: number) => string;
-  /** Painting backend. Defaults to Canvas2D. */
+  /** Painting backend. Defaults to `createDefaultRenderer` (WebGL2 when the
+   *  browser yields a context, canvas2d otherwise). */
   renderer?: RendererFactory;
   /** Passed through to the root element. */
   className?: string;

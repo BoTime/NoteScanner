@@ -50,10 +50,12 @@ for dark mode:
 
 ## Renderers
 
-`renderer?: RendererFactory` swaps the painting backend; the default is
-`createCanvas2DRenderer`. The `Renderer` interface takes coverage arrays, not
-images — see [issue #1](https://github.com/BoTime/NoteScanner/issues/1) for the
-planned WebGL2 renderer.
+`renderer?: RendererFactory` swaps the painting backend. The default is
+`createDefaultRenderer`, which paints with `createWebGL2Renderer` when the
+browser actually yields a `webgl2` context (probed, not sniffed) and falls back
+to `createCanvas2DRenderer` otherwise. All three are exported. The `Renderer`
+interface takes coverage arrays, not images — see
+[issue #9](https://github.com/BoTime/NoteScanner/issues/9).
 
 ## Development
 

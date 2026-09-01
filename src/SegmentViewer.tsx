@@ -51,7 +51,7 @@ import {
   type SegmentMenuAction,
   type ViewTransform,
 } from './core';
-import { createCanvas2DRenderer, type Renderer, type Scene } from './renderer';
+import { createDefaultRenderer, type Renderer, type Scene } from './renderer';
 
 interface PopupState {
   segmentIds: string[];
@@ -165,7 +165,7 @@ export function SegmentViewer({
   // renderer owns cached bitmaps keyed to this canvas.
   const rendererRef = useRef<Renderer | null>(null);
   if (rendererRef.current === null) {
-    rendererRef.current = (renderer ?? createCanvas2DRenderer)();
+    rendererRef.current = (renderer ?? createDefaultRenderer)();
   }
 
   const selectedIds = initialSelectedIds;
