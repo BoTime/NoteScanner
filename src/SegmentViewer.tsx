@@ -76,6 +76,16 @@ function buildMaskData(
   canvas.height = height;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) throw new Error('Could not get 2d context for mask');
+  // Masks may arrive smaller than the image — the worker encodes them at the
+  // decoder's own resolution under `lowResMaskEncode` — and this `drawImage`
+  // is the upscale. NEAREST-NEIGHBOUR, deliberately: it is the cheaper filter
+  // (one tap per output pixel, on a canvas that is CPU-backed by
+  // `willReadFrequently`), and it is the only one that keeps every read-back
+  // pixel exactly (255,255,255,255) or (0,0,0,0), which is what the
+  // `alpha > 0 && red > 0` predicate below — and the preview and server-side
+  // crops that share it — depend on. Bilinear would ring a semi-transparent
+  // halo around every boundary and quietly widen every mask.
+  ctx.imageSmoothingEnabled = false;
   ctx.drawImage(img, 0, 0, width, height);
   const data = ctx.getImageData(0, 0, width, height).data;
   const coverage = new Uint8Array(width * height);

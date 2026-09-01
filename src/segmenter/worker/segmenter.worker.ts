@@ -10,8 +10,10 @@
  *
  * Pipeline: load once -> encode the image once -> decode the prompt grid in
  * batches -> filter each batch at the decoder's native 256x256 -> dedupe every
- * candidate at 256x256 -> resample ONLY the survivors to full resolution,
- * fused with the PNG encode. Reaching full resolution before NMS is not a
+ * candidate at 256x256 -> resample ONLY the survivors to full resolution (for
+ * the exact area gate and the reported area) and, by default, a second time at
+ * the decoder's own window, which is what the PNG is written from. That encode
+ * is fused into the same loop. Reaching full resolution before NMS is not a
  * detail: NMS discards ~94% of candidates, and carrying each one at
  * `width * height` bytes until then is hundreds of megabytes on a photo and
  * gigabytes on a large one.
@@ -34,6 +36,7 @@ import {
   encodeMaskPng,
   releaseCandidate,
   releaseRejected,
+  resolveEncodeMask,
   resolveSurvivor,
   retainCandidate,
   stabilityScore,
@@ -438,8 +441,13 @@ async function run(request: SegmenterRequest): Promise<void> {
         phase = 'resample';
         const resampleStarted = performance.now();
         const mask = resolveSurvivor(candidate, plan);
+        // The SECOND resample, at the encode target, timed into `resample`
+        // with the first. Keeping it out of `mask-encode` is what lets that
+        // stage's before/after read as the encode saving alone instead of
+        // hiding the moved cost inside the very number this change claims.
+        const encodeMask = mask ? resolveEncodeMask(candidate, mask, plan) : null;
         timings.record('resample', performance.now() - resampleStarted);
-        if (!mask) {
+        if (!mask || !encodeMask) {
           // Passed the coarse pre-NMS gate, failed the exact full-resolution
           // `minMaskArea`. Visible as the gap between afterNms and returned.
           releaseCandidate(candidate);
@@ -448,8 +456,14 @@ async function run(request: SegmenterRequest): Promise<void> {
 
         phase = 'mask-encode';
         const encodeStarted = performance.now();
-        const maskUrl = await encodeMaskPng(mask.coverage, originalWidth, originalHeight);
+        const maskUrl = await encodeMaskPng(
+          encodeMask.coverage,
+          plan.encodeWidth,
+          plan.encodeHeight,
+        );
         timings.record('mask-encode', performance.now() - encodeStarted);
+        // `area` stays the FULL-RESOLUTION survivor's: the option moves the
+        // PNG's pixel dimensions and nothing else about the returned set.
         masks.push({ maskUrl, area: mask.area });
 
         // The surviving coverage, only when asked for. Every mask owns its own

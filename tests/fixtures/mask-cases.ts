@@ -35,6 +35,11 @@ function mulberry32(seed: number): () => number {
  * 7, 9 and 17 are not multiples of 8, so their last row byte carries padding
  * bits — the case a 1-bit writer gets wrong. 1xN and Nx1 are the degenerate
  * strips; 64x64 is big enough that deflate actually has something to chew on.
+ *
+ * 256x162 and 162x256 are the ENCODE dimensions a 1024x649 (and 649x1024)
+ * photo produces under `lowResMaskEncode` — the sizes the writer is now
+ * actually asked for. 162 is not a multiple of 8 either, so the portrait case
+ * keeps the padding-bit path exercised at a realistic width.
  */
 const SHAPES: ReadonlyArray<readonly [number, number]> = [
   [1, 1],
@@ -45,6 +50,8 @@ const SHAPES: ReadonlyArray<readonly [number, number]> = [
   [1, 40],
   [40, 1],
   [64, 64],
+  [256, 162],
+  [162, 256],
 ];
 
 function buildMaskCases(): MaskCase[] {
