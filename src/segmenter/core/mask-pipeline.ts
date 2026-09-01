@@ -101,7 +101,11 @@ export interface RetainResult {
  * the part that maps onto the processor's padding rather than onto the image.
  * On a non-square image only a fraction of the grid is ever sampled, so this
  * gate is proportionally STRICTER than `minMaskArea` — on a 1024x649 photo it
- * drops masks down to roughly 1.6x `minMaskArea` of true area. That coarseness
+ * drops masks down to roughly 1.6x `minMaskArea` of true area. It cuts the
+ * other way too: `thresholdMask` counts covered pixels across that same whole
+ * grid, so a candidate whose logits cross the threshold out in the padded
+ * region banks area that the resample then slices away — for that one the
+ * effective gate is LOOSER, not stricter. That coarseness
  * is deliberate (it is where F3's saving lives) and it is why the exact,
  * unscaled `minMaskArea` is re-applied at full resolution after NMS: the
  * RETURNED set is what the option documents, and this gate only decides what

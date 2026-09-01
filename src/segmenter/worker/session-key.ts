@@ -18,9 +18,10 @@ import type { SegmenterOptions } from '../core';
  * reuse a session built the other way and the sweep would measure a lie.
  *
  * `keepRawMasks` is deliberately absent — it only changes what the worker
- * posts back — and so is every per-call inference knob (`pointsPerSide`,
- * `batchSize`, thresholds, `overlapDecodeFilter`), none of which touch the
- * session.
+ * posts back — and so is `lowResFilterNms`, which only changes what the worker
+ * does with `pred_masks` after the decoder has returned it. So is every
+ * per-call inference knob (`pointsPerSide`, `batchSize`, thresholds,
+ * `overlapDecodeFilter`), none of which touch the session.
  */
 export function sessionCacheKey(options: SegmenterOptions): string {
   return [
