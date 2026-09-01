@@ -136,3 +136,27 @@ describe('SegmentViewer frame/canvas sizing', () => {
     expect(readyBox).toEqual(loadingBox);
   });
 });
+
+describe('renderer selection', () => {
+  it('an explicitly passed renderer prop overrides the default selection', async () => {
+    vi.stubGlobal('Image', FakeImage);
+    const injected = fakeRenderer();
+    render(
+      <SegmentViewer
+        imageUrl="https://example.com/image.png"
+        imageWidth={40}
+        imageHeight={10}
+        segments={[]}
+        initialSelectedIds={new Set()}
+        onSelectionChange={() => {}}
+        onCreateSegment={async () => {}}
+        renderer={() => injected}
+      />,
+    );
+    // If the default factory had won, this would be a canvas2d renderer calling
+    // getContext('2d') on a jsdom canvas, which throws in this environment —
+    // so the injected renderer being the one that paints is the whole claim.
+    await waitFor(() => expect(injected.draw).toHaveBeenCalled());
+    expect(injected.init).toHaveBeenCalled();
+  });
+});

@@ -12,8 +12,20 @@ export interface Scene {
   base: CanvasImageSource;
   imageWidth: number;
   imageHeight: number;
-  /** Decoded masks by segment id. */
-  masks: Map<string, { coverage: Uint8Array; area: number }>;
+  /**
+   * Decoded masks by segment id.
+   *
+   * `width` / `height` are the mask's OWN natural size and are optional. They
+   * are the hook for issue #7, which will make the segmenter worker emit
+   * 256x256 masks instead of image-sized ones; a renderer that samples the
+   * coverage as a texture then needs no change to keep working. Nothing emits
+   * them yet.
+   *
+   * `canvas2d` ignores them entirely and keeps operating at full image
+   * resolution. `webgl2` uses them for its scratch texture's dimensions when
+   * present and falls back to `imageWidth` / `imageHeight` when absent.
+   */
+  masks: Map<string, { coverage: Uint8Array; area: number; width?: number; height?: number }>;
   /** Committed selection. */
   selectedIds: Set<string>;
   /** Hover preview; when set it replaces the selection's bright window. */
