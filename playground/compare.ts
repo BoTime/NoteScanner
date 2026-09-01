@@ -66,6 +66,7 @@ export interface RowOptions {
   overlapDecodeFilter: boolean;
   gpuResidentEmbeddings: boolean;
   keepRawMasks: boolean;
+  lowResFilterNms: boolean;
 }
 
 export interface SweepConfig {
@@ -73,6 +74,13 @@ export interface SweepConfig {
   batchSizes: readonly number[];
   dtypes: readonly SegmenterOptions['dtype'][];
   pointsPerSide: readonly number[];
+  /**
+   * The pipeline axis. `[true]` by default: the default grid measures the
+   * SHIPPED pipeline and stays 16 rows. `[false, true]` walks a before/after
+   * pair — baseline first, so the Compare tab retains the PRE-change mask set
+   * as its agreement baseline.
+   */
+  lowResFilterNms: readonly boolean[];
   /**
    * Off by default. Sixteen rows of ~50 full-resolution coverage arrays is
    * hundreds of megabytes, and greedy best-IoU pairing over them is a
@@ -100,6 +108,7 @@ export const DEFAULT_SWEEP_CONFIG: SweepConfig = {
   batchSizes: [8, 32],
   dtypes: ['fp32', 'fp16'],
   pointsPerSide: [16],
+  lowResFilterNms: [true],
   keepRawMasks: false,
   reps: 1,
 };
@@ -148,6 +157,12 @@ export function resolveConfig(
   }
   positiveInts('batchSizes', config.batchSizes);
   positiveInts('pointsPerSide', config.pointsPerSide);
+  if (config.lowResFilterNms.length === 0) throw new Error('lowResFilterNms must not be empty');
+  for (const value of config.lowResFilterNms) {
+    if (typeof value !== 'boolean') {
+      throw new Error(`lowResFilterNms must be booleans, got ${JSON.stringify(value)}`);
+    }
+  }
   if (!Number.isInteger(config.reps) || config.reps < 1) {
     throw new Error(`reps must be a positive integer, got ${JSON.stringify(config.reps)}`);
   }
@@ -158,7 +173,7 @@ export function resolveConfig(
 // ----------------------------------------------------------------------- grid
 
 export interface SweepRow {
-  /** Stable and unique: `p<pps>-<dtype>-b<batch>-<path>-r<rep>`. */
+  /** Stable and unique: `p<pps>-<dtype>-b<batch>-<path>-<pipeline>-r<rep>`. */
   id: string;
   rep: number;
   /** True only for the discarded first run — see `warmUpRow`. */
@@ -168,8 +183,9 @@ export interface SweepRow {
 
 /**
  * The measured rows, in a deterministic nesting order — pointsPerSide, then
- * dtype, then batchSize, then decode path, then rep — so two runs of the same
- * config produce the same ids in the same order and their tables line up.
+ * dtype, then batchSize, then decode path, then lowResFilterNms, then rep — so
+ * two runs of the same config produce the same ids in the same order and their
+ * tables line up.
  */
 export function expandGrid(config: SweepConfig): SweepRow[] {
   const rows: SweepRow[] = [];
@@ -177,19 +193,24 @@ export function expandGrid(config: SweepConfig): SweepRow[] {
     for (const dtype of config.dtypes) {
       for (const batchSize of config.batchSizes) {
         for (const path of config.decodePaths) {
-          for (let rep = 1; rep <= config.reps; rep += 1) {
-            rows.push({
-              id: `p${pointsPerSide}-${dtype}-b${batchSize}-${path}-r${rep}`,
-              rep,
-              warmUp: false,
-              options: {
-                dtype,
-                batchSize,
-                pointsPerSide,
-                keepRawMasks: config.keepRawMasks,
-                ...decodeFlags(path),
-              },
-            });
+          for (const lowResFilterNms of config.lowResFilterNms) {
+            for (let rep = 1; rep <= config.reps; rep += 1) {
+              rows.push({
+                id: `p${pointsPerSide}-${dtype}-b${batchSize}-${path}-${
+                  lowResFilterNms ? 'lowres' : 'fullres'
+                }-r${rep}`,
+                rep,
+                warmUp: false,
+                options: {
+                  dtype,
+                  batchSize,
+                  pointsPerSide,
+                  keepRawMasks: config.keepRawMasks,
+                  lowResFilterNms,
+                  ...decodeFlags(path),
+                },
+              });
+            }
           }
         }
       }
@@ -270,7 +291,9 @@ export function fastestRecord(records: readonly RunRecord[]): RunRecord | null {
 /** Derived from the record's OWN options — never from current control state. */
 export function rowLabel(record: RunRecord): string {
   const o = record.options;
-  return `${decodePathOf(o)} · ${o.dtype} · batch ${o.batchSize} · pps ${o.pointsPerSide}`;
+  return `${decodePathOf(o)} · ${o.dtype} · batch ${o.batchSize} · pps ${o.pointsPerSide} · ${
+    o.lowResFilterNms ? 'lowres' : 'fullres'
+  }`;
 }
 
 // ------------------------------------------------------------------ agreement
@@ -398,10 +421,18 @@ function describeAdapter(adapter: AdapterInfo | undefined): string {
 }
 
 const COLUMNS = [
-  'rank', 'row', 'decode path', 'dtype', 'batch', 'pps', 'budget', 'total',
-  'model-load', 'encode', 'decode', 'filter', 'nms', 'mask-encode',
-  'raw', 'afterFilter', 'afterNms', 'status',
+  'rank', 'row', 'decode path', 'dtype', 'batch', 'pps', 'lowres', 'budget', 'total',
+  'model-load', 'encode', 'decode', 'filter', 'nms', 'resample', 'mask-encode',
+  'raw', 'afterFilter', 'afterNms', 'returned', 'status',
 ] as const;
+
+/**
+ * Text columns. Derived by NAME rather than by index: a positional rule
+ * silently misaligns the whole table the moment a column is inserted.
+ */
+const LEFT_ALIGNED: ReadonlySet<string> = new Set([
+  'rank', 'row', 'decode path', 'dtype', 'batch', 'pps', 'lowres', 'status',
+]);
 
 /** The committed report. Ranked on `budget`; the caveat sits above the table. */
 export function toMarkdown(records: readonly RunRecord[], meta: ReportMeta): string {
@@ -424,7 +455,7 @@ export function toMarkdown(records: readonly RunRecord[], meta: ReportMeta): str
   );
   lines.push('');
   lines.push(`| ${COLUMNS.join(' | ')} |`);
-  lines.push(`| ${COLUMNS.map((_, i) => (i <= 5 || i === 17 ? '---' : '---:')).join(' | ')} |`);
+  lines.push(`| ${COLUMNS.map((column) => (LEFT_ALIGNED.has(column) ? '---' : '---:')).join(' | ')} |`);
 
   let rank = 0;
   for (const record of ranked) {
@@ -440,6 +471,7 @@ export function toMarkdown(records: readonly RunRecord[], meta: ReportMeta): str
         o.dtype,
         String(o.batchSize),
         String(o.pointsPerSide),
+        o.lowResFilterNms ? 'lowres' : 'fullres',
         ms(record.budgetMs),
         ms(record.timings?.totalMs),
         ms(p?.['model-load'].total),
@@ -447,10 +479,12 @@ export function toMarkdown(records: readonly RunRecord[], meta: ReportMeta): str
         ms(p?.decode.total),
         ms(p?.filter.total),
         ms(p?.nms.total),
+        ms(p?.resample.total),
         ms(p?.['mask-encode'].total),
         record.counts ? String(record.counts.raw) : DASH,
         record.counts ? String(record.counts.afterFilter) : DASH,
         record.counts ? String(record.counts.afterNms) : DASH,
+        record.counts ? String(record.counts.returned) : DASH,
         ok ? 'ok' : `failed in ${record.phase ?? 'unknown'}: ${record.message ?? ''}`,
       ].join(' | ')} |`,
     );
@@ -460,8 +494,9 @@ export function toMarkdown(records: readonly RunRecord[], meta: ReportMeta): str
   lines.push(
     `All times in ms. \`budget\` = \`total\` − \`model-load\`; every row respawns the worker ` +
       `and pays its own warm, HTTP-cached model load. Phase columns are stage TOTALS over ` +
-      `${PHASE_ORDER.length} phases. \`raw\`/\`afterFilter\`/\`afterNms\` are mask counts: a row ` +
-      `that is fast because it silently dropped masks is visible here.`,
+      `${PHASE_ORDER.length} phases. \`raw\`/\`afterFilter\`/\`afterNms\`/\`returned\` are mask ` +
+      `counts: a row that is fast because it silently dropped masks is visible here, and a gap ` +
+      `between \`afterNms\` and \`returned\` is the full-resolution area re-check.`,
   );
 
   const withAgreement = records.filter((record) => record.agreement);

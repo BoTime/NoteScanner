@@ -34,6 +34,12 @@ describe('sessionCacheKey', () => {
     expect(sessionCacheKey(options({ batchSize: 64 }))).toBe(base);
     expect(sessionCacheKey(options({ overlapDecodeFilter: true }))).toBe(base);
   });
+
+  it('ignores lowResFilterNms, which changes nothing about the session (AC5)', () => {
+    expect(sessionCacheKey(options({ lowResFilterNms: true }))).toBe(
+      sessionCacheKey(options({ lowResFilterNms: false })),
+    );
+  });
 });
 
 describe('embeddingsSessionOptions', () => {

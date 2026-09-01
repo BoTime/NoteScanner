@@ -1,0 +1,234 @@
+{
+  "generatedAt": "2026-09-01T01:05:22.476Z",
+  "adapter": {
+    "vendor": "apple",
+    "architecture": "metal-3",
+    "device": "",
+    "description": "",
+    "software": false
+  },
+  "config": {
+    "decodePaths": [
+      "none"
+    ],
+    "batchSizes": [
+      8
+    ],
+    "dtypes": [
+      "fp32"
+    ],
+    "pointsPerSide": [
+      16
+    ],
+    "lowResFilterNms": [
+      false,
+      true
+    ],
+    "keepRawMasks": true,
+    "reps": 1
+  },
+  "rows": [
+    {
+      "rowId": "p16-fp32-b8-none-fullres-r1",
+      "options": {
+        "dtype": "fp32",
+        "batchSize": 8,
+        "pointsPerSide": 16,
+        "overlapDecodeFilter": false,
+        "gpuResidentEmbeddings": false,
+        "keepRawMasks": true,
+        "lowResFilterNms": false
+      },
+      "status": "ok",
+      "timings": {
+        "phases": {
+          "model-load": {
+            "p50": 646.6000000238419,
+            "p95": 646.6000000238419,
+            "max": 646.6000000238419,
+            "count": 1,
+            "total": 646.6000000238419
+          },
+          "encode": {
+            "p50": 1390.699999988079,
+            "p95": 1390.699999988079,
+            "max": 1390.699999988079,
+            "count": 1,
+            "total": 1390.699999988079
+          },
+          "decode": {
+            "p50": 191.10000002384186,
+            "p95": 194.69999998807907,
+            "max": 239.89999997615814,
+            "count": 32,
+            "total": 6074.5
+          },
+          "filter": {
+            "p50": 13.800000011920929,
+            "p95": 21.400000035762787,
+            "max": 23.599999964237213,
+            "count": 32,
+            "total": 457.69999998807907
+          },
+          "nms": {
+            "p50": 290.9000000357628,
+            "p95": 290.9000000357628,
+            "max": 290.9000000357628,
+            "count": 1,
+            "total": 290.9000000357628
+          },
+          "resample": {
+            "p50": 0,
+            "p95": 0,
+            "max": 0.09999996423721313,
+            "count": 36,
+            "total": 0.09999996423721313
+          },
+          "mask-encode": {
+            "p50": 0.800000011920929,
+            "p95": 1.0999999642372131,
+            "max": 3.5,
+            "count": 36,
+            "total": 33.30000001192093
+          }
+        },
+        "filterSubPhases": {
+          "select": {
+            "p50": 2,
+            "p95": 3.699999988079071,
+            "max": 3.699999988079071,
+            "count": 32,
+            "total": 69.89999997615814
+          },
+          "threshold": {
+            "p50": 11.899999976158142,
+            "p95": 18,
+            "max": 19.899999976158142,
+            "count": 32,
+            "total": 387.69999998807907
+          }
+        },
+        "totalMs": 8921.600000023842
+      },
+      "counts": {
+        "raw": 768,
+        "afterFilter": 242,
+        "afterNms": 36,
+        "returned": 36
+      },
+      "budgetMs": 8275,
+      "agreement": {
+        "baselineCount": 36,
+        "variantCount": 36,
+        "matched": 36,
+        "unmatchedBaseline": 0,
+        "unmatchedVariant": 0,
+        "meanIou": 1,
+        "medianIou": 1,
+        "minIou": 1,
+        "floor": 0.9
+      }
+    },
+    {
+      "rowId": "p16-fp32-b8-none-lowres-r1",
+      "options": {
+        "dtype": "fp32",
+        "batchSize": 8,
+        "pointsPerSide": 16,
+        "overlapDecodeFilter": false,
+        "gpuResidentEmbeddings": false,
+        "keepRawMasks": true,
+        "lowResFilterNms": true
+      },
+      "status": "ok",
+      "timings": {
+        "phases": {
+          "model-load": {
+            "p50": 720.3000000119209,
+            "p95": 720.3000000119209,
+            "max": 720.3000000119209,
+            "count": 1,
+            "total": 720.3000000119209
+          },
+          "encode": {
+            "p50": 2142.399999976158,
+            "p95": 2142.399999976158,
+            "max": 2142.399999976158,
+            "count": 1,
+            "total": 2142.399999976158
+          },
+          "decode": {
+            "p50": 174.9000000357628,
+            "p95": 196.9000000357628,
+            "max": 257.10000002384186,
+            "count": 32,
+            "total": 5778.6000000834465
+          },
+          "filter": {
+            "p50": 4.399999976158142,
+            "p95": 6.5,
+            "max": 7,
+            "count": 32,
+            "total": 137.0000001192093
+          },
+          "nms": {
+            "p50": 42,
+            "p95": 42,
+            "max": 42,
+            "count": 1,
+            "total": 42
+          },
+          "resample": {
+            "p50": 1.2999999523162842,
+            "p95": 2.399999976158142,
+            "max": 5.100000023841858,
+            "count": 34,
+            "total": 49.999999821186066
+          },
+          "mask-encode": {
+            "p50": 0.9000000357627869,
+            "p95": 1.199999988079071,
+            "max": 10.199999988079071,
+            "count": 34,
+            "total": 40.500000178813934
+          }
+        },
+        "filterSubPhases": {
+          "select": {
+            "p50": 3.299999952316284,
+            "p95": 4.900000035762787,
+            "max": 5.399999976158142,
+            "count": 32,
+            "total": 99.69999986886978
+          },
+          "threshold": {
+            "p50": 1,
+            "p95": 2.300000011920929,
+            "max": 2.600000023841858,
+            "count": 32,
+            "total": 37.30000025033951
+          }
+        },
+        "totalMs": 8944.899999976158
+      },
+      "counts": {
+        "raw": 768,
+        "afterFilter": 240,
+        "afterNms": 34,
+        "returned": 34
+      },
+      "budgetMs": 8224.599999964237,
+      "agreement": {
+        "baselineCount": 36,
+        "variantCount": 34,
+        "matched": 34,
+        "unmatchedBaseline": 2,
+        "unmatchedVariant": 0,
+        "meanIou": 0.9996371483043224,
+        "medianIou": 1,
+        "minIou": 0.9929165548698685,
+        "floor": 0.9
+      }
+    }
+  ]
+}

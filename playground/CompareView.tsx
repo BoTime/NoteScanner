@@ -45,6 +45,7 @@ const INITIAL_OPTIONS: RowOptions = {
   overlapDecodeFilter: false,
   gpuResidentEmbeddings: false,
   keepRawMasks: false,
+  lowResFilterNms: true,
 };
 
 function ms(value: number | undefined): string {
@@ -269,6 +270,16 @@ export function CompareView({ createSegmenter, createBitmap }: CompareViewProps 
             disabled={running}
             onChange={(e) => patch({ keepRawMasks: e.target.checked })}
           />
+        </label>{' '}
+        <label>
+          low-res filter/NMS:{' '}
+          <input
+            data-testid="low-res-filter-nms"
+            type="checkbox"
+            checked={options.lowResFilterNms}
+            disabled={running}
+            onChange={(e) => patch({ lowResFilterNms: e.target.checked })}
+          />
         </label>
       </p>
 
@@ -301,11 +312,13 @@ export function CompareView({ createSegmenter, createBitmap }: CompareViewProps 
             <th align="left">dtype</th>
             <th align="right">batch</th>
             <th align="right">pps</th>
+            <th align="left">lowres</th>
             <th align="right">budget</th>
             <th align="right">total</th>
             <th align="right">decode</th>
             <th align="right">filter</th>
             <th align="right">kept</th>
+            <th align="right">returned</th>
             <th align="left">status</th>
           </tr>
         </thead>
@@ -322,11 +335,13 @@ export function CompareView({ createSegmenter, createBitmap }: CompareViewProps 
                 <td>{o.dtype}</td>
                 <td align="right">{o.batchSize}</td>
                 <td align="right">{o.pointsPerSide}</td>
+                <td>{o.lowResFilterNms ? 'lowres' : 'fullres'}</td>
                 <td align="right"><strong>{ms(record.budgetMs)}</strong></td>
                 <td align="right">{ms(record.timings?.totalMs)}</td>
                 <td align="right">{ms(p?.decode.total)}</td>
                 <td align="right">{ms(p?.filter.total)}</td>
                 <td align="right">{record.counts?.afterNms ?? '—'}</td>
+                <td align="right">{record.counts?.returned ?? '—'}</td>
                 <td>
                   {record.status === 'ok' ? (
                     'ok'

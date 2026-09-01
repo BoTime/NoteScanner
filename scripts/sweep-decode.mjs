@@ -118,6 +118,7 @@ async function runOneRow(page, row) {
   await setCheckbox(page, 'overlap-decode-filter', o.overlapDecodeFilter);
   await setCheckbox(page, 'gpu-resident-embeddings', o.gpuResidentEmbeddings);
   await setCheckbox(page, 'keep-raw-masks', o.keepRawMasks);
+  await setCheckbox(page, 'low-res-filter-nms', o.lowResFilterNms);
 
   const before = Number(await page.getAttribute('[data-testid="run-json"]', 'data-run-count'));
   await page.click('[data-testid="run-row"]');
@@ -265,7 +266,7 @@ async function main() {
       // One unsupported path must not cost the other fifteen their row.
       console.log(
         record.status === 'ok'
-          ? `${record.budgetMs.toFixed(0)} ms budget, ${record.counts.afterNms} masks`
+          ? `${record.budgetMs.toFixed(0)} ms budget, ${record.counts.returned} masks`
           : `FAILED in ${record.phase}: ${record.message}`,
       );
     }

@@ -9,11 +9,12 @@
  * import `/segmenter`.
  *
  * Pipeline: load once -> encode the image once -> decode the prompt grid in
- * batches -> filter each batch at LOW resolution -> resample only the
- * survivors straight to binary masks -> NMS across everything. Filtering
- * before resampling is not an optimization detail: a batch of 8 points yields
- * 24 low-res masks, and taking all of them to full image resolution is
- * hundreds of megabytes per batch.
+ * batches -> filter each batch at the decoder's native 256x256 -> dedupe every
+ * candidate at 256x256 -> resample ONLY the survivors to full resolution,
+ * fused with the PNG encode. Reaching full resolution before NMS is not a
+ * detail: NMS discards ~94% of candidates, and carrying each one at
+ * `width * height` bytes until then is hundreds of megabytes on a photo and
+ * gigabytes on a large one.
  */
 import {
   AutoProcessor,
@@ -26,14 +27,20 @@ import {
 import {
   batchPoints,
   buildPointGrid,
+  candidateCoverage,
+  createFilterPlan,
   createTimingAccumulator,
-  dedupeMasks,
+  dedupeCandidates,
   encodeMaskPng,
-  resampleThresholdMask,
+  releaseCandidate,
+  releaseRejected,
+  resolveSurvivor,
+  retainCandidate,
   stabilityScore,
-  type BinaryMask,
   type EncodedMask,
+  type FilterPlan,
   type FilterSubstep,
+  type MaskCandidate,
   type NmsComparison,
   type RawMask,
   type SegmentationPhase,
@@ -167,7 +174,13 @@ async function run(request: SegmenterRequest): Promise<void> {
     const { width: padWidth, height: padHeight } = resolvePadSize(processor);
 
     const batches = batchPoints(buildPointGrid(options.pointsPerSide), options.batchSize);
-    const candidates: BinaryMask[] = [];
+    const candidates: MaskCandidate[] = [];
+    /**
+     * Resolved on the first batch, because `lowWidth`/`lowHeight` are read off
+     * the decoder's tensor rather than hardcoded to 256. Null only when not one
+     * batch ran, in which case `candidates` is empty too.
+     */
+    let plan: FilterPlan | null = null;
     let rawCount = 0;
 
     /**
@@ -272,6 +285,27 @@ async function run(request: SegmenterRequest): Promise<void> {
         const logits = predMasks.data as Float32Array;
         const scores = iouScores.data as Float32Array;
 
+        // Assigned through a local const so the block below has a
+        // non-nullable `FilterPlan` without leaning on narrowing a `let`.
+        const batchPlan = (plan ??= createFilterPlan(
+          {
+            lowWidth,
+            lowHeight,
+            padWidth,
+            padHeight,
+            reshapedWidth,
+            reshapedHeight,
+            originalWidth,
+            originalHeight,
+          },
+          {
+            maskThreshold: options.maskThreshold,
+            minMaskArea: options.minMaskArea,
+            nmsIouThreshold: options.nmsIouThreshold,
+            lowResFilterNms: options.lowResFilterNms,
+          },
+        ));
+
         // One mask per prompt point: the most confident of the three that is
         // also stable. SAM emits three to disambiguate whole/part/subpart, and
         // keeping all three is how you end up with three copies of everything.
@@ -299,25 +333,17 @@ async function run(request: SegmenterRequest): Promise<void> {
         recordSub('select');
 
         if (chosen.length > 0) {
-          // One call per surviving mask, straight from its low-res window to a
-          // binary mask: no staging copy, no 5-D tensor, no ORT round-trip, no
-          // padded-resolution intermediate and no full-resolution float buffer.
+          // One call per chosen mask. On the shipped path this is a 256x256
+          // binarize plus the scaled gate — no full-resolution buffer is
+          // allocated anywhere in this loop.
           for (let k = 0; k < chosen.length; k += 1) {
-            const mask = resampleThresholdMask({
-              logits: logits.subarray(chosen[k] * lowPixels, (chosen[k] + 1) * lowPixels),
-              lowWidth,
-              lowHeight,
-              padWidth,
-              padHeight,
-              reshapedWidth,
-              reshapedHeight,
-              originalWidth,
-              originalHeight,
-              threshold: options.maskThreshold,
-            });
-            if (mask.area >= options.minMaskArea) candidates.push(mask);
+            const retained = retainCandidate(
+              logits.subarray(chosen[k] * lowPixels, (chosen[k] + 1) * lowPixels),
+              batchPlan,
+            );
+            if (retained.candidate) candidates.push(retained.candidate);
           }
-          recordSub('resample');
+          recordSub('threshold');
         }
         timings.record('filter', performance.now() - started);
 
@@ -346,69 +372,98 @@ async function run(request: SegmenterRequest): Promise<void> {
       throw error;
     }
 
-    // ---- nms: once, across every batch. Adjacent grid points land on the
-    // ---- same object constantly, so this is where the count actually falls.
-    phase = 'nms';
-
-    // The A/B, when asked for. Reference FIRST, over the identical candidate
-    // array, so the comparison is against the same input and not a mutated one.
-    let referenceKept: number[] | null = null;
-    let referenceMs = 0;
-    if (options.compareNms) {
-      const referenceStarted = performance.now();
-      referenceKept = dedupeMasksReference(candidates, options.nmsIouThreshold);
-      referenceMs = performance.now() - referenceStarted;
-    }
-
-    started = performance.now();
-    const kept = dedupeMasks(candidates, options.nmsIouThreshold, originalWidth);
-    elapsed = performance.now() - started;
-    // Deliberately only the fast path: the reference's time travels in
-    // nmsComparison and NOWHERE else, so the results table is never inflated
-    // by the doubled work.
-    timings.record('nms', elapsed);
-    post({ type: 'progress', event: { phase: 'nms', done: 1, total: 1, ms: elapsed } });
-
-    // Both are returned ascending, so element-wise equality is set equality.
-    const nmsComparison: NmsComparison | null = referenceKept
-      ? {
-          referenceMs,
-          fastMs: elapsed,
-          identical:
-            referenceKept.length === kept.length &&
-            referenceKept.every((value, i) => value === kept[i]),
-        }
-      : null;
-
-    // ---- mask-encode: right here, while the coverage arrays are still local.
-    // ---- `phase` is set first so a `CompressionStream` failure surfaces as
-    // ---- SegmenterFailure('mask-encode', ...) through the catch below.
-    phase = 'mask-encode';
-    const masks: EncodedMask[] = [];
-    for (const index of kept) {
-      const encodeStarted = performance.now();
-      const maskUrl = await encodeMaskPng(
-        candidates[index].coverage,
-        originalWidth,
-        originalHeight,
-      );
-      timings.record('mask-encode', performance.now() - encodeStarted);
-      masks.push({ maskUrl, area: candidates[index].area });
-    }
-
-    // ---- keepRawMasks: the surviving coverage buffers, only when asked for.
-    // Collected AFTER the encode loop above, which reads them locally.
+    // ---- nms: once, across every batch, on whatever resolution the
+    // ---- candidates carry. Adjacent grid points land on the same object
+    // ---- constantly, so this is where the count actually falls.
     //
-    // `thresholdMask` allocates a fresh Uint8Array per mask, so every coverage
-    // owns its own ArrayBuffer: no buffer can appear twice in this transfer
-    // list (postMessage throws on a duplicate) and none is aliased elsewhere.
-    const rawMasks: RawMask[] = options.keepRawMasks
-      ? kept.map((index) => ({
-          coverage: candidates[index].coverage,
-          area: candidates[index].area,
-        }))
-      : [];
-    // With the flag off this is empty and the call below is byte-for-byte
+    // All of it is inside `if (plan)` rather than behind a non-null assertion:
+    // `plan` is null only for an empty prompt grid, and then `candidates` is
+    // empty too and there is nothing to dedupe, resample or encode.
+    const masks: EncodedMask[] = [];
+    const rawMasks: RawMask[] = [];
+    let afterNms = 0;
+    let nmsComparison: NmsComparison | null = null;
+
+    if (plan) {
+      phase = 'nms';
+
+      // The A/B, when asked for. Reference FIRST, over the identical candidate
+      // array, so the comparison is against the same input and not a mutated one.
+      let referenceKept: number[] | null = null;
+      let referenceMs = 0;
+      if (options.compareNms) {
+        const referenceStarted = performance.now();
+        referenceKept = dedupeMasksReference(
+          candidateCoverage(candidates),
+          options.nmsIouThreshold,
+        );
+        referenceMs = performance.now() - referenceStarted;
+      }
+
+      started = performance.now();
+      const kept = dedupeCandidates(candidates, plan);
+      elapsed = performance.now() - started;
+      // Deliberately only the fast path: the reference's time travels in
+      // nmsComparison and NOWHERE else, so the results table is never inflated
+      // by the doubled work.
+      timings.record('nms', elapsed);
+      afterNms = kept.length;
+      post({ type: 'progress', event: { phase: 'nms', done: 1, total: 1, ms: elapsed } });
+
+      // Both are returned ascending, so element-wise equality is set equality.
+      nmsComparison = referenceKept
+        ? {
+            referenceMs,
+            fastMs: elapsed,
+            identical:
+              referenceKept.length === kept.length &&
+              referenceKept.every((value, i) => value === kept[i]),
+          }
+        : null;
+
+      // Every rejected candidate's retained buffers go NOW, before the loop
+      // below allocates its first full-resolution mask.
+      releaseRejected(candidates, kept);
+
+      // ---- resample + mask-encode, fused. One survivor at a time, so full
+      // ---- resolution exists for exactly one mask at a time — except under
+      // ---- keepRawMasks, which retains each survivor's coverage on purpose.
+      // ---- `phase` is assigned inside the loop so a resample throw surfaces
+      // ---- as SegmenterFailure('resample', ...) and a CompressionStream
+      // ---- failure as SegmenterFailure('mask-encode', ...).
+      for (const index of kept) {
+        const candidate = candidates[index];
+
+        phase = 'resample';
+        const resampleStarted = performance.now();
+        const mask = resolveSurvivor(candidate, plan);
+        timings.record('resample', performance.now() - resampleStarted);
+        if (!mask) {
+          // Passed the coarse pre-NMS gate, failed the exact full-resolution
+          // `minMaskArea`. Visible as the gap between afterNms and returned.
+          releaseCandidate(candidate);
+          continue;
+        }
+
+        phase = 'mask-encode';
+        const encodeStarted = performance.now();
+        const maskUrl = await encodeMaskPng(mask.coverage, originalWidth, originalHeight);
+        timings.record('mask-encode', performance.now() - encodeStarted);
+        masks.push({ maskUrl, area: mask.area });
+
+        // The surviving coverage, only when asked for. Every mask owns its own
+        // ArrayBuffer — `thresholdMask` and `resampleThresholdMask` each
+        // allocate a fresh one — so no buffer can appear twice in the transfer
+        // list below (postMessage throws on a duplicate) and none is aliased.
+        if (options.keepRawMasks) rawMasks.push({ coverage: mask.coverage, area: mask.area });
+
+        // Dropped here rather than after the loop: 320 KB of logits plus
+        // coverage per survivor, and nothing reads either again.
+        releaseCandidate(candidate);
+      }
+    }
+
+    // With keepRawMasks off this is empty and the call below is byte-for-byte
     // today's: `masks` is strings, and not one coverage buffer crosses the
     // worker boundary.
     const transfer = rawMasks.map((mask) => mask.coverage.buffer as ArrayBuffer);
@@ -423,7 +478,8 @@ async function run(request: SegmenterRequest): Promise<void> {
         counts: {
           raw: rawCount,
           afterFilter: candidates.length,
-          afterNms: masks.length,
+          afterNms,
+          returned: masks.length,
         },
         ...(nmsComparison ? { nmsComparison } : {}),
         ...(options.keepRawMasks ? { rawMasks } : {}),

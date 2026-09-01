@@ -72,14 +72,14 @@ describe('createTimingAccumulator filter sub-steps', () => {
 
   it('accumulates repeated samples for one sub-step', () => {
     const timings = createTimingAccumulator();
-    timings.recordFilterSub('resample', 10);
-    timings.recordFilterSub('resample', 30);
-    timings.recordFilterSub('resample', 20);
+    timings.recordFilterSub('threshold', 10);
+    timings.recordFilterSub('threshold', 30);
+    timings.recordFilterSub('threshold', 20);
     const report = timings.report(60);
-    expect(report.filterSubPhases.resample.count).toBe(3);
-    expect(report.filterSubPhases.resample.p50).toBe(20);
-    expect(report.filterSubPhases.resample.max).toBe(30);
-    expect(report.filterSubPhases.resample.total).toBe(60);
+    expect(report.filterSubPhases.threshold.count).toBe(3);
+    expect(report.filterSubPhases.threshold.p50).toBe(20);
+    expect(report.filterSubPhases.threshold.max).toBe(30);
+    expect(report.filterSubPhases.threshold.total).toBe(60);
     expect(report.filterSubPhases.select.count).toBe(0);
   });
 
@@ -90,7 +90,7 @@ describe('createTimingAccumulator filter sub-steps', () => {
     const report = timings.report(100);
     expect(report.phases.filter.total).toBe(100);
     expect(report.filterSubPhases.select.total).toBe(3);
-    expect(report.filterSubPhases.resample.total).toBe(0);
+    expect(report.filterSubPhases.threshold.total).toBe(0);
   });
 
   // The no-residual invariant: the worker's two regions are drawn to be
@@ -101,10 +101,10 @@ describe('createTimingAccumulator filter sub-steps', () => {
     const timings = createTimingAccumulator();
     timings.record('filter', 100);
     timings.recordFilterSub('select', 3);
-    timings.recordFilterSub('resample', 97);
+    timings.recordFilterSub('threshold', 97);
     timings.record('filter', 50);
     timings.recordFilterSub('select', 2);
-    timings.recordFilterSub('resample', 48);
+    timings.recordFilterSub('threshold', 48);
     const report = timings.report(150);
     const subTotal = FILTER_SUBSTEP_ORDER.reduce(
       (sum, step) => sum + report.filterSubPhases[step].total,
