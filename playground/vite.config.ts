@@ -4,7 +4,11 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   root: __dirname,
   plugins: [react()],
-  server: { port: 5180 },
+  // strictPort so Playwright's `webServer.url` is the URL Vite actually
+  // serves. `scripts/sweep-decode.mjs` passes `port: 0, strictPort: false`
+  // inline, which overrides this, so the sweep still never fights a dev
+  // server the developer already has running.
+  server: { port: 5180, strictPort: true },
   // `@huggingface/transformers` is only reachable through a dynamic import
   // inside the SAM worker module (src/segmenter/worker/segmenter.worker.ts),
   // not from the page's static import graph. Vite's dependency scanner does
