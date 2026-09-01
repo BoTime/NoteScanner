@@ -119,6 +119,7 @@ async function runOneRow(page, row) {
   await setCheckbox(page, 'gpu-resident-embeddings', o.gpuResidentEmbeddings);
   await setCheckbox(page, 'keep-raw-masks', o.keepRawMasks);
   await setCheckbox(page, 'low-res-filter-nms', o.lowResFilterNms);
+  await setCheckbox(page, 'low-res-mask-encode', o.lowResMaskEncode);
 
   const before = Number(await page.getAttribute('[data-testid="run-json"]', 'data-run-count'));
   await page.click('[data-testid="run-row"]');

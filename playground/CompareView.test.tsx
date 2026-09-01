@@ -163,4 +163,15 @@ describe('CompareView', () => {
     await waitFor(() => expect(seen).toHaveLength(1));
     expect(seen[0].lowResFilterNms).toBe(false);
   });
+
+  it('defaults the lowResMaskEncode control on and passes it through (AC10)', async () => {
+    const { seen } = mount(stubResult(1000));
+    const control = screen.getByTestId('low-res-mask-encode') as HTMLInputElement;
+    expect(control.checked).toBe(true);
+
+    fireEvent.click(control);
+    fireEvent.click(screen.getByTestId('run-row'));
+    await waitFor(() => expect(seen).toHaveLength(1));
+    expect(seen[0].lowResMaskEncode).toBe(false);
+  });
 });

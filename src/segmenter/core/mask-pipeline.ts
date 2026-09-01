@@ -23,6 +23,18 @@
  * kept-set delta is measured rather than argued about. This is the one place
  * the old path stays.
  *
+ * The ENCODE target is a third resolution decision, and it is COUPLED to the
+ * one above. `lowResMaskEncode` asks for the PNG to be written at the
+ * decoder's own window (`resolveEncodeSize`), and `resolveEncodeMask` produces
+ * that coverage by resampling the RETAINED LOGITS — which exist only on the
+ * `lowResFilterNms: true` path, where `MaskCandidate.logits` is a copy of the
+ * window; on the baseline path it is null by construction. So
+ * `createFilterPlan` forces the encode target back to full resolution whenever
+ * `lowResFilterNms` is false, whatever `lowResMaskEncode` says. Retaining
+ * logits on the baseline path to lift that would add 256 KB per candidate to a
+ * path that already carries full-resolution coverage and exists only to be
+ * measured against.
+ *
  * A survivor is resampled by `resampleFull` below on BOTH paths, with the same
  * arguments — that is the mechanical reason a mask both paths keep is
  * byte-for-byte identical, and it is what the Boundary tab asserts in a real
@@ -59,6 +71,8 @@ export interface FilterNmsOptions {
   nmsIouThreshold: number;
   /** True for the shipped low-resolution pipeline; false for the baseline. */
   lowResFilterNms: boolean;
+  /** True to write survivor PNGs at the decoder's own window; see `resolveEncodeSize`. */
+  lowResMaskEncode: boolean;
 }
 
 /**
@@ -85,6 +99,10 @@ export interface FilterPlan {
   minArea: number;
   /** The width handed to `dedupeMasks`, matching the retained coverage. */
   nmsWidth: number;
+  /** Width of the mask PNG, in pixels. `geometry.originalWidth` when encoding full-size. */
+  encodeWidth: number;
+  /** Height of the mask PNG, in pixels. `geometry.originalHeight` when encoding full-size. */
+  encodeHeight: number;
 }
 
 export interface RetainResult {
@@ -123,12 +141,57 @@ export function lowResMinArea(
   return Math.max(1, Math.round((minMaskArea * lowPixels) / originalPixels));
 }
 
+/**
+ * The size a survivor's PNG is written at: one output pixel per decoder
+ * sample over the window that actually maps onto the image.
+ *
+ * `resampleThresholdMask` samples the top-left
+ * `(reshapedWidth * lowWidth / padWidth) x (reshapedHeight * lowHeight / padHeight)`
+ * window of the logit grid however large an output it is asked for, so
+ * rounding that window to whole samples is the size at which the resample
+ * neither invents nor discards information.
+ *
+ * CLAMPED to the image on each axis. Without the clamp a photo smaller than
+ * the window — a 200x150 thumbnail, whose window rounds to 256x192 — would be
+ * handed a mask LARGER than full resolution, which is the opposite of the
+ * point.
+ *
+ * FLOORED at 1 on each axis, following `lowResMinArea` above: a rounded window
+ * reaches 0 on an extreme aspect ratio (roughly 683:1, where `reshapedHeight`
+ * lands at 1 and `256 * 1 / 1024` rounds to 0), and a 0 handed to
+ * `resampleThresholdMask` throws rather than degrading. Both siblings guard the
+ * same shape of computation the same way.
+ *
+ * Returns full resolution on either opt-out: `lowResMaskEncode` off, or
+ * `lowResFilterNms` off (see the module comment — the baseline path retains no
+ * logits to resample from).
+ */
+export function resolveEncodeSize(
+  geometry: MaskGeometry,
+  options: FilterNmsOptions,
+): { width: number; height: number } {
+  if (!options.lowResMaskEncode || !options.lowResFilterNms) {
+    return { width: geometry.originalWidth, height: geometry.originalHeight };
+  }
+  return {
+    width: Math.min(
+      Math.max(1, Math.round((geometry.lowWidth * geometry.reshapedWidth) / geometry.padWidth)),
+      geometry.originalWidth,
+    ),
+    height: Math.min(
+      Math.max(1, Math.round((geometry.lowHeight * geometry.reshapedHeight) / geometry.padHeight)),
+      geometry.originalHeight,
+    ),
+  };
+}
+
 export function createFilterPlan(
   geometry: MaskGeometry,
   options: FilterNmsOptions,
 ): FilterPlan {
   const lowPixels = geometry.lowWidth * geometry.lowHeight;
   const originalPixels = geometry.originalWidth * geometry.originalHeight;
+  const encode = resolveEncodeSize(geometry, options);
   return {
     geometry,
     options,
@@ -136,6 +199,8 @@ export function createFilterPlan(
       ? lowResMinArea(options.minMaskArea, lowPixels, originalPixels)
       : options.minMaskArea,
     nmsWidth: options.lowResFilterNms ? geometry.lowWidth : geometry.originalWidth,
+    encodeWidth: encode.width,
+    encodeHeight: encode.height,
   };
 }
 
@@ -249,4 +314,47 @@ export function resolveSurvivor(candidate: MaskCandidate, plan: FilterPlan): Bin
     mask = candidate.coverage;
   }
   return mask.area >= plan.options.minMaskArea ? mask : null;
+}
+
+/**
+ * The coverage a survivor's PNG is written from.
+ *
+ * A SECOND resample of the same retained logits, at `plan.encodeWidth` x
+ * `plan.encodeHeight`. It exists alongside `resolveSurvivor` rather than
+ * replacing it because two things depend on the full-resolution mask and must
+ * not move: the exact, unscaled `minMaskArea` re-check, and the `area`
+ * reported on `EncodedMask`. The cost is ~41k extra output pixels against the
+ * ~665k already resampled on a 1024x649 photo.
+ *
+ * Deliberately NOT a decimation of `mask`: downsampling an already-binarised
+ * mask is how thin structures vanish. It resamples the logits, so a structure
+ * one output pixel wide still crosses the threshold.
+ *
+ * When the target IS full resolution — the flag off, `lowResFilterNms` off, or
+ * a photo small enough that the clamp collapsed the window — this returns
+ * `mask` itself, so that path costs nothing and produces byte-for-byte
+ * today's PNG.
+ */
+export function resolveEncodeMask(
+  candidate: MaskCandidate,
+  mask: BinaryMask,
+  plan: FilterPlan,
+): BinaryMask {
+  const { encodeWidth, encodeHeight } = plan;
+  if (
+    encodeWidth === plan.geometry.originalWidth &&
+    encodeHeight === plan.geometry.originalHeight
+  ) {
+    return mask;
+  }
+  if (!candidate.logits) {
+    throw new Error('mask-pipeline: resolveEncodeMask called on a released candidate');
+  }
+  return resampleThresholdMask({
+    logits: candidate.logits,
+    ...plan.geometry,
+    originalWidth: encodeWidth,
+    originalHeight: encodeHeight,
+    threshold: plan.options.maskThreshold,
+  });
 }

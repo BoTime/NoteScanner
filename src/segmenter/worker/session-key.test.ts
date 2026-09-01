@@ -40,6 +40,12 @@ describe('sessionCacheKey', () => {
       sessionCacheKey(options({ lowResFilterNms: false })),
     );
   });
+
+  it('ignores lowResMaskEncode, which only picks a resample target (AC5)', () => {
+    expect(sessionCacheKey(options({ lowResMaskEncode: true }))).toBe(
+      sessionCacheKey(options({ lowResMaskEncode: false })),
+    );
+  });
 });
 
 describe('embeddingsSessionOptions', () => {

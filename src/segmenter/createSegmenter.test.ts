@@ -390,6 +390,19 @@ describe('createSegmenter', () => {
     await second;
   });
 
+  it('defaults lowResMaskEncode ON and passes an explicit false through (AC5)', async () => {
+    const segmenter = createSegmenter({ createWorker: spawn });
+    const first = segmenter.segment(fakeBitmap());
+    expect(FakeWorker.instances[0].posted[0].options.lowResMaskEncode).toBe(true);
+    FakeWorker.instances[0].emit(doneMessage());
+    await first;
+
+    const second = segmenter.segment(fakeBitmap(), { lowResMaskEncode: false });
+    expect(FakeWorker.instances[1].posted[0].options.lowResMaskEncode).toBe(false);
+    FakeWorker.instances[1].emit(doneMessage());
+    await second;
+  });
+
   it('reports the returned count separately from afterNms (AC11)', async () => {
     const segmenter = createSegmenter({ createWorker: spawn });
     const pending = segmenter.segment(fakeBitmap());

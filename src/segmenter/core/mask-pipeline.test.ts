@@ -6,6 +6,8 @@ import {
   lowResMinArea,
   releaseCandidate,
   releaseRejected,
+  resolveEncodeMask,
+  resolveEncodeSize,
   resolveSurvivor,
   retainCandidate,
   type FilterNmsOptions,
@@ -39,6 +41,7 @@ const OPTIONS: FilterNmsOptions = {
   minMaskArea: 100,
   nmsIouThreshold: 0.7,
   lowResFilterNms: true,
+  lowResMaskEncode: true,
 };
 
 function lowPlan(overrides: Partial<FilterNmsOptions> = {}) {
@@ -274,5 +277,143 @@ describe('the baseline path', () => {
       expect(mask!.area).toBe(reference[i].area);
       expect(Array.from(mask!.coverage)).toEqual(Array.from(reference[i].coverage));
     });
+  });
+});
+
+/**
+ * SAM's real geometry: a 256x256 logit grid over a 1024x1024 pad, with the
+ * resized image occupying the top-left `reshaped` window. These are the
+ * numbers a photo actually produces, not scaled-down stand-ins.
+ */
+function samGeometry(
+  originalWidth: number,
+  originalHeight: number,
+  reshapedWidth: number,
+  reshapedHeight: number,
+): MaskGeometry {
+  return {
+    lowWidth: 256,
+    lowHeight: 256,
+    padWidth: 1024,
+    padHeight: 1024,
+    reshapedWidth,
+    reshapedHeight,
+    originalWidth,
+    originalHeight,
+  };
+}
+
+function encodeSize(geometry: MaskGeometry, overrides: Partial<FilterNmsOptions> = {}) {
+  const size = resolveEncodeSize(geometry, { ...OPTIONS, ...overrides });
+  return [size.width, size.height];
+}
+
+describe('resolveEncodeSize', () => {
+  it('gives one output pixel per decoder sample on a landscape photo (AC4)', () => {
+    // 1024x649 resized to 1024x649 inside a 1024 pad: 256 x round(162.25).
+    expect(encodeSize(samGeometry(1024, 649, 1024, 649))).toEqual([256, 162]);
+  });
+
+  it('follows the image round on a portrait photo (AC4)', () => {
+    expect(encodeSize(samGeometry(649, 1024, 649, 1024))).toEqual([162, 256]);
+  });
+
+  it('is the whole grid on a square image (AC4)', () => {
+    expect(encodeSize(samGeometry(1024, 1024, 1024, 1024))).toEqual([256, 256]);
+  });
+
+  it('rounds a half sample up rather than truncating (AC4)', () => {
+    // 256 * 650 / 1024 = 162.5 exactly. Math.floor would give 162.
+    expect(encodeSize(samGeometry(1024, 650, 1024, 650))).toEqual([256, 163]);
+  });
+
+  it('never upscales a photo smaller than the logit window (AC4)', () => {
+    // 200x150 resized to 1024x768: the unclamped window would be 256x192,
+    // LARGER than the image on both axes.
+    expect(encodeSize(samGeometry(200, 150, 1024, 768))).toEqual([200, 150]);
+  });
+
+  it('never rounds an axis away to zero, however extreme the aspect ratio', () => {
+    // A 2048x3 strip resizes to 1024x1 inside the pad, so the unclamped
+    // window is round(256 * 1 / 1024) = round(0.25) = 0 on the vertical axis —
+    // and `resampleThresholdMask` throws on a zero dimension rather than
+    // degrading, surfacing as SegmenterFailure('resample'). Floored at 1, the
+    // same way `lowResMinArea` floors its own scaled computation.
+    expect(encodeSize(samGeometry(2048, 3, 1024, 1))).toEqual([256, 1]);
+  });
+
+  it('is full resolution when lowResMaskEncode is off (AC5)', () => {
+    expect(encodeSize(samGeometry(1024, 649, 1024, 649), { lowResMaskEncode: false })).toEqual([
+      1024, 649,
+    ]);
+  });
+
+  it('is full resolution when lowResFilterNms is off, whatever lowResMaskEncode says (AC6)', () => {
+    // The encode resample reads the RETAINED LOGITS, and the baseline path
+    // keeps none: `MaskCandidate.logits` is null there by construction.
+    expect(
+      encodeSize(samGeometry(1024, 649, 1024, 649), {
+        lowResFilterNms: false,
+        lowResMaskEncode: true,
+      }),
+    ).toEqual([1024, 649]);
+  });
+
+  it('is carried on the plan', () => {
+    const plan = lowPlan();
+    // GEOMETRY: 16x16 grid, 16x16 pad, 16x12 reshaped, 32x24 image.
+    expect([plan.encodeWidth, plan.encodeHeight]).toEqual([16, 12]);
+    expect([fullPlan().encodeWidth, fullPlan().encodeHeight]).toEqual([32, 24]);
+  });
+});
+
+describe('resolveEncodeMask', () => {
+  it('resamples the logit window at the encode size, leaving the survivor alone (AC8)', () => {
+    const window = makeWindow([2, 9, 3, 8]);
+    const plan = lowPlan();
+    const { candidate } = retainCandidate(window, plan);
+    const mask = resolveSurvivor(candidate!, plan)!;
+
+    const encoded = resolveEncodeMask(candidate!, mask, plan);
+
+    // The survivor is untouched: this is what keeps `EncodedMask.area` and the
+    // returned set independent of the option.
+    expect(mask.coverage.length).toBe(32 * 24);
+    expect(mask.area).toBe(192);
+
+    expect(encoded.coverage.length).toBe(16 * 12);
+    expect(encoded.area).toBe(48);
+    // At this geometry both scale factors are exactly 1, so the encoded mask
+    // must be the thresholded top-left 16x12 window of the logit grid, sample
+    // for sample — an expectation derived from the WINDOW, not from the
+    // implementation.
+    const expected: number[] = [];
+    for (let y = 0; y < 12; y += 1) {
+      for (let x = 0; x < 16; x += 1) expected.push(window[y * 16 + x] > 0 ? 1 : 0);
+    }
+    expect(Array.from(encoded.coverage)).toEqual(expected);
+  });
+
+  it('hands back the survivor itself when the target is full resolution (AC5)', () => {
+    const plan = lowPlan({ lowResMaskEncode: false });
+    const { candidate } = retainCandidate(makeWindow([2, 9, 3, 8]), plan);
+    const mask = resolveSurvivor(candidate!, plan)!;
+    // The SAME object, not an equal one: with the flag off the PNG is written
+    // from exactly the bytes it is written from today.
+    expect(resolveEncodeMask(candidate!, mask, plan)).toBe(mask);
+  });
+
+  it('hands back the survivor itself when the clamp collapsed the target', () => {
+    const plan = createFilterPlan(samGeometry(200, 150, 1024, 768), OPTIONS);
+    const mask = { coverage: new Uint8Array(200 * 150), area: 7 };
+    expect(resolveEncodeMask({ logits: null, coverage: null }, mask, plan)).toBe(mask);
+  });
+
+  it('fails loudly on a released candidate rather than encoding garbage', () => {
+    const plan = lowPlan();
+    const { candidate } = retainCandidate(makeWindow([2, 9, 3, 8]), plan);
+    const mask = resolveSurvivor(candidate!, plan)!;
+    releaseCandidate(candidate!);
+    expect(() => resolveEncodeMask(candidate!, mask, plan)).toThrow(/released/);
   });
 });

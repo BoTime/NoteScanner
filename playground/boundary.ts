@@ -53,7 +53,10 @@ export const BOUNDARY_OPTIONS = {
 } as const;
 
 function pathOptions(lowResFilterNms: boolean): FilterNmsOptions {
-  return { ...BOUNDARY_OPTIONS, lowResFilterNms };
+  // The Boundary tab compares FULL-RESOLUTION masks between the two filter
+  // paths, so it pins the encode target off: a reduced PNG target would change
+  // nothing it looks at, and pinning it says so.
+  return { ...BOUNDARY_OPTIONS, lowResFilterNms, lowResMaskEncode: false };
 }
 
 /**
