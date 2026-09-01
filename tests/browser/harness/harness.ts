@@ -230,9 +230,134 @@ async function paint(backend: 'canvas2d' | 'webgl2', spec: SceneSpec): Promise<F
   }
 }
 
+/** One renderer instance across a sequence of scenes, which is what makes the
+ *  texture-count bound meaningful: a fresh renderer per frame would reset the
+ *  accounting and the test would pass no matter how badly the real one leaked. */
+async function paintSequence(
+  backend: 'canvas2d' | 'webgl2',
+  specs: SceneSpec[],
+): Promise<{ frames: Frame[]; peak: number; live: number }> {
+  const renderer = makeRenderer(backend);
+  const canvas = document.createElement('canvas');
+  document.getElementById('root')!.appendChild(canvas);
+  const frames: Frame[] = [];
+  try {
+    renderer.init(canvas);
+    peakTextures = liveTextures;
+    for (const spec of specs) {
+      const scene = toScene(spec);
+      renderer.draw(scene);
+      frames.push({
+        width: spec.width,
+        height: spec.height,
+        pixels: await settle(canvas, spec.width, spec.height, () => renderer.draw(scene)),
+      });
+    }
+    return { frames, peak: peakTextures, live: liveTextures };
+  } finally {
+    renderer.dispose();
+    canvas.remove();
+  }
+}
+
+/** Resolve on the next `type` event, or reject with a named error rather than
+ *  hanging until Playwright's 30s test timeout reports only "page.evaluate". */
+function eventOrTimeout(target: EventTarget, type: string, ms = 10000): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${type} never fired within ${ms}ms`)), ms);
+    target.addEventListener(
+      type,
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+}
+
+export interface LossResult {
+  supported: boolean;
+  threwWhileLost: boolean;
+  before: number[];
+  after: number[];
+  width: number;
+  height: number;
+}
+
+/** AC7: draw() while the context is lost must paint nothing and throw nothing;
+ *  after restore the same scene must come back. */
+async function loseAndRestore(spec: SceneSpec): Promise<LossResult> {
+  const renderer = createWebGL2Renderer();
+  const canvas = document.createElement('canvas');
+  document.getElementById('root')!.appendChild(canvas);
+  try {
+    const scene = toScene(spec);
+    renderer.init(canvas);
+    renderer.draw(scene);
+    const before = await settle(canvas, spec.width, spec.height, () => renderer.draw(scene));
+    const ext = lastGl?.getExtension('WEBGL_lose_context') ?? null;
+    if (!ext) {
+      return {
+        supported: false,
+        threwWhileLost: false,
+        before,
+        after: before,
+        width: spec.width,
+        height: spec.height,
+      };
+    }
+    const lost = eventOrTimeout(canvas, 'webglcontextlost');
+    ext.loseContext();
+    await lost;
+    let threwWhileLost = false;
+    try {
+      renderer.draw(scene);
+    } catch {
+      threwWhileLost = true;
+    }
+    // Yield a whole TASK before asking for the restore. `await lost` resumes in
+    // a microtask, and a microtask checkpoint runs as soon as the listener that
+    // resolved it returns — i.e. still inside the browser's dispatch of
+    // `webglcontextlost`. chromium and webkit only mark restoration allowed
+    // once that dispatch has finished and observed `preventDefault()`, so
+    // calling `restoreContext()` from the microtask is too early: measured on
+    // the first run of this spec, webkit logged
+    // `INVALID_OPERATION: restoreContext: context restoration not allowed`
+    // and `webglcontextrestored` never fired on either engine, while firefox
+    // happened to allow it. A `setTimeout(0)` lets the dispatch complete.
+    await new Promise<void>((r) => setTimeout(r, 0));
+    // Registered here, not alongside `lost`: `webglcontextrestored` cannot fire
+    // before the call below, and a listener armed earlier would leave a live
+    // rejection timer behind whenever the `lost` wait is the one that fails.
+    const restored = eventOrTimeout(canvas, 'webglcontextrestored');
+    ext.restoreContext();
+    await restored;
+    renderer.draw(scene);
+    const after = await settle(canvas, spec.width, spec.height, () => renderer.draw(scene));
+    return { supported: true, threwWhileLost, before, after, width: spec.width, height: spec.height };
+  } finally {
+    renderer.dispose();
+    canvas.remove();
+  }
+}
+
 export interface HarnessApi {
   webgl2Available(): boolean;
   paint(backend: 'canvas2d' | 'webgl2', spec: SceneSpec): Promise<Frame>;
+  paintSequence(
+    backend: 'canvas2d' | 'webgl2',
+    specs: SceneSpec[],
+  ): Promise<{ frames: Frame[]; peak: number; live: number }>;
+  loseAndRestore(spec: SceneSpec): Promise<LossResult>;
+  /**
+   * How many `createImageBitmap` calls are still in flight — the same exact
+   * completion signal `settle()` uses, exposed because `viewer-harness.tsx`
+   * cannot use `settle()`: React owns the viewer's paint, so there is no
+   * `repaint` callback to hand it. Waiting a fixed number of frames instead
+   * is the firefox trap documented on `settle()`.
+   */
+  pendingBitmaps(): number;
   contextLog(): string[];
   resetContextLog(): void;
   textureStats(): { live: number; peak: number };
@@ -251,6 +376,9 @@ const api: HarnessApi = {
     }
   },
   paint,
+  paintSequence,
+  loseAndRestore,
+  pendingBitmaps: () => pendingBitmaps,
   contextLog: () => contextLog.slice(),
   resetContextLog: () => {
     contextLog.length = 0;
