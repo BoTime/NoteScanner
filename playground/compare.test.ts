@@ -28,6 +28,7 @@ function rowOptions(overrides: Partial<RowOptions> = {}): RowOptions {
     overlapDecodeFilter: false,
     gpuResidentEmbeddings: false,
     keepRawMasks: false,
+    lowResFilterNms: true,
     ...overrides,
   };
 }
@@ -47,7 +48,7 @@ function okRecord(rowId: string, budget: number, overrides: Partial<RowOptions> 
     options: rowOptions(overrides),
     status: 'ok',
     timings,
-    counts: { raw: 96, afterFilter: 31, afterNms: 12, returned: 12 },
+    counts: { raw: 96, afterFilter: 31, afterNms: 12, returned: 11 },
     budgetMs: budgetMsOf(timings),
   };
 }
@@ -105,8 +106,8 @@ describe('expandGrid', () => {
     const second = expandGrid(DEFAULT_SWEEP_CONFIG).map((row) => row.id);
     expect(second).toEqual(first);
     expect(new Set(first).size).toBe(first.length);
-    expect(first[0]).toBe('p16-fp32-b8-none-r1');
-    expect(first[15]).toBe('p16-fp16-b32-both-r1');
+    expect(first[0]).toBe('p16-fp32-b8-none-lowres-r1');
+    expect(first[15]).toBe('p16-fp16-b32-both-lowres-r1');
   });
 
   it('widens to 32 rows under --full and multiplies by --reps, without editing code (AC6)', () => {
@@ -126,6 +127,35 @@ describe('expandGrid', () => {
     expect(() => resolveConfig({ batchSizes: [] })).toThrow(/batchSizes/);
     expect(() => resolveConfig({}, { reps: 0 })).toThrow(/reps/);
     expect(() => resolveConfig({ decodePaths: ['turbo' as never] })).toThrow(/decodePaths/);
+  });
+
+  it('keeps the default grid at 16 rows, all measuring the shipped pipeline (AC12)', () => {
+    const rows = expandGrid(DEFAULT_SWEEP_CONFIG);
+    expect(rows).toHaveLength(16);
+    expect(rows.every((row) => row.options.lowResFilterNms)).toBe(true);
+  });
+
+  it('walks a before/after pair from a config, adjacently (AC12)', () => {
+    const rows = expandGrid(
+      resolveConfig({
+        decodePaths: ['none'],
+        batchSizes: [8],
+        dtypes: ['fp32'],
+        lowResFilterNms: [false, true],
+      }),
+    );
+    expect(rows.map((row) => row.id)).toEqual([
+      'p16-fp32-b8-none-fullres-r1',
+      'p16-fp32-b8-none-lowres-r1',
+    ]);
+    // The baseline runs FIRST, so the Compare tab's retained mask set is the
+    // pre-change one and every later row is compared against it.
+    expect(rows[0].options.lowResFilterNms).toBe(false);
+  });
+
+  it('rejects a lowResFilterNms axis that is empty or not boolean', () => {
+    expect(() => resolveConfig({ lowResFilterNms: [] })).toThrow(/lowResFilterNms/);
+    expect(() => resolveConfig({ lowResFilterNms: ['yes' as never] })).toThrow(/lowResFilterNms/);
   });
 });
 
@@ -178,14 +208,14 @@ describe('toMarkdown', () => {
     })], meta);
     for (const column of [
       'budget', 'total', 'model-load', 'encode', 'decode', 'filter', 'nms',
-      'mask-encode', 'raw', 'afterFilter', 'afterNms', 'status',
+      'resample', 'mask-encode', 'raw', 'afterFilter', 'afterNms', 'returned', 'status',
     ]) {
       expect(md).toContain(column);
     }
     expect(md).toContain('p16-fp16-b32-both-r1');
-    expect(md).toContain('| both | fp16 | 32 | 16 |');
-    // counts.raw / afterFilter / afterNms, in that order.
-    expect(md).toContain('| 96 | 31 | 12 |');
+    expect(md).toContain('| both | fp16 | 32 | 16 | lowres |');
+    // counts.raw / afterFilter / afterNms / returned, in that order.
+    expect(md).toContain('| 96 | 31 | 12 | 11 |');
     expect(md).toContain('700');
   });
 
@@ -216,6 +246,18 @@ describe('toMarkdown', () => {
 
   it('says so plainly when nothing completed', () => {
     expect(toMarkdown([failedRecord('boom')], meta)).toContain('No row completed');
+  });
+
+  it('aligns the table from the column names, not a hardcoded index', () => {
+    const md = toMarkdown([okRecord('a', 100)], meta);
+    const lines = md.split('\n');
+    const header = lines.find((line) => line.startsWith('| rank |'))!;
+    const alignment = lines[lines.indexOf(header) + 1];
+    const cells = (row: string) => row.split('|').slice(1, -1).length;
+    expect(cells(alignment)).toBe(cells(header));
+    // `status` is the last column and is left-aligned; a positional rule
+    // silently misaligns it the moment a column is added.
+    expect(alignment.trim().endsWith('--- |')).toBe(true);
   });
 });
 

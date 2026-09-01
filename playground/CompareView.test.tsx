@@ -75,7 +75,8 @@ describe('CompareView', () => {
     mount(stubResult(1400));
     for (const id of [
       'dtype', 'batch-size', 'points-per-side', 'overlap-decode-filter',
-      'gpu-resident-embeddings', 'keep-raw-masks', 'run-row', 'run-json', 'copy-markdown',
+      'gpu-resident-embeddings', 'keep-raw-masks', 'low-res-filter-nms', 'run-row', 'run-json',
+      'copy-markdown',
     ]) {
       expect(screen.getByTestId(id)).toBeTruthy();
     }
@@ -150,5 +151,16 @@ describe('CompareView', () => {
     expect(record.message).toContain('allocation failed');
     expect(record.budgetMs).toBeUndefined();
     expect(screen.getByTestId('compare-table').textContent).toContain('decode');
+  });
+
+  it('defaults the lowResFilterNms control on and passes it through (AC12)', async () => {
+    const { seen } = mount(stubResult(1000));
+    const control = screen.getByTestId('low-res-filter-nms') as HTMLInputElement;
+    expect(control.checked).toBe(true);
+
+    fireEvent.click(control);
+    fireEvent.click(screen.getByTestId('run-row'));
+    await waitFor(() => expect(seen).toHaveLength(1));
+    expect(seen[0].lowResFilterNms).toBe(false);
   });
 });
