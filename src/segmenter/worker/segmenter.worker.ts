@@ -303,6 +303,7 @@ async function run(request: SegmenterRequest): Promise<void> {
             minMaskArea: options.minMaskArea,
             nmsIouThreshold: options.nmsIouThreshold,
             lowResFilterNms: options.lowResFilterNms,
+            lowResMaskEncode: options.lowResMaskEncode,
           },
         ));
 

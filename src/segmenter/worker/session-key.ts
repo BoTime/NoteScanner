@@ -18,8 +18,9 @@ import type { SegmenterOptions } from '../core';
  * reuse a session built the other way and the sweep would measure a lie.
  *
  * `keepRawMasks` is deliberately absent — it only changes what the worker
- * posts back — and so is `lowResFilterNms`, which only changes what the worker
- * does with `pred_masks` after the decoder has returned it. So is every
+ * posts back — and so are `lowResFilterNms` and `lowResMaskEncode`, which only
+ * change what the worker does with `pred_masks` after the decoder has returned
+ * it, and at what size it writes the PNG. So is every
  * per-call inference knob (`pointsPerSide`, `batchSize`, thresholds,
  * `overlapDecodeFilter`), none of which touch the session.
  */

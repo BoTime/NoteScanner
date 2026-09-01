@@ -137,6 +137,34 @@ export interface SegmenterOptions {
    * about the ONNX sessions and must never enter the worker's session cache key.
    */
   lowResFilterNms: boolean;
+
+  /**
+   * Encode each surviving mask's PNG at the decoder's own resolution instead
+   * of at full image resolution.
+   *
+   * DEFAULT TRUE. The decoder emits a 256x256 logit grid, of which only the
+   * top-left `lowWidth * reshapedWidth / padWidth` by
+   * `lowHeight * reshapedHeight / padHeight` window maps onto image pixels —
+   * 256x162 on a 1024x649 photo, 41k samples against 665k pixels. Encoding
+   * there writes one PNG pixel per decoder sample instead of interpolating for
+   * information the model never produced. `SegmentViewer` already rescales any
+   * intrinsic mask size into image space, and does it with
+   * `imageSmoothingEnabled = false`, so a covered pixel still reads back as
+   * exactly `(255,255,255,255)`.
+   *
+   * It does NOT change which masks are returned, nor `EncodedMask.area`: the
+   * full-resolution survivor resample and the exact, unscaled `minMaskArea`
+   * re-check both still run. What it does change is boundary precision — mask
+   * edges quantise to the upscale factor, about 4 px on a 1024x649 photo.
+   *
+   * It has NO EFFECT when `lowResFilterNms` is false: the encode resample
+   * reads the retained logits, which only that path keeps.
+   *
+   * Like `keepRawMasks` and `lowResFilterNms`, it selects a resample target
+   * and nothing about the ONNX sessions, so it must never enter the worker's
+   * session cache key.
+   */
+  lowResMaskEncode: boolean;
 }
 
 /**
@@ -174,6 +202,7 @@ export const DEFAULT_SEGMENTER_OPTIONS: SegmenterOptions = {
   gpuResidentEmbeddings: false,
   keepRawMasks: false,
   lowResFilterNms: true,
+  lowResMaskEncode: true,
 };
 
 export interface PhaseTiming {
@@ -265,7 +294,15 @@ export class SegmenterFailure extends Error {
  * per-mask transfer and the main-thread encode loop.
  */
 export interface EncodedMask {
+  /**
+   * A 1-bit indexed PNG data URL. Its pixel dimensions are the ENCODE target,
+   * which under the default `lowResMaskEncode` is the decoder's own window
+   * (256x162 on a 1024x649 photo) rather than the image size reported on the
+   * `done` message. A consumer must scale it into image space, as
+   * `SegmentViewer` does.
+   */
   maskUrl: string;
+  /** Covered pixels at FULL image resolution, independent of the encode target. */
   area: number;
 }
 
