@@ -69,4 +69,15 @@ describe('SegmentView inference controls', () => {
     expect(screen.queryByTestId('batch-size')).toBeNull();
     expect(screen.queryByTestId('dtype')).toBeNull();
   });
+
+  it('offers the encode-target control, seeded from the package default (AC2)', () => {
+    render(<SegmentView />);
+    const control = screen.getByTestId('low-res-mask-encode') as HTMLInputElement;
+    // The tab where masks are actually clicked is where AC2 gets exercised by
+    // hand, so the flag has to be reachable from here and not only from the
+    // Compare tab.
+    expect(control.checked).toBe(DEFAULT_SEGMENTER_OPTIONS.lowResMaskEncode);
+    fireEvent.click(control);
+    expect(control.checked).toBe(false);
+  });
 });

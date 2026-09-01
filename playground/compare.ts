@@ -67,6 +67,7 @@ export interface RowOptions {
   gpuResidentEmbeddings: boolean;
   keepRawMasks: boolean;
   lowResFilterNms: boolean;
+  lowResMaskEncode: boolean;
 }
 
 export interface SweepConfig {
@@ -81,6 +82,12 @@ export interface SweepConfig {
    * as its agreement baseline.
    */
   lowResFilterNms: readonly boolean[];
+  /**
+   * The encode-target axis. `[true]` by default, for the same reason as
+   * `lowResFilterNms`: the default grid measures the SHIPPED pipeline and
+   * stays 16 rows. `[false, true]` walks the before/after pair.
+   */
+  lowResMaskEncode: readonly boolean[];
   /**
    * Off by default. Sixteen rows of ~50 full-resolution coverage arrays is
    * hundreds of megabytes, and greedy best-IoU pairing over them is a
@@ -109,6 +116,7 @@ export const DEFAULT_SWEEP_CONFIG: SweepConfig = {
   dtypes: ['fp32', 'fp16'],
   pointsPerSide: [16],
   lowResFilterNms: [true],
+  lowResMaskEncode: [true],
   keepRawMasks: false,
   reps: 1,
 };
@@ -120,6 +128,15 @@ function positiveInts(name: string, values: readonly number[]): void {
   for (const value of values) {
     if (!Number.isInteger(value) || value < 1) {
       throw new Error(`${name} must be positive integers, got ${JSON.stringify(value)}`);
+    }
+  }
+}
+
+function booleanAxis(name: string, values: readonly boolean[]): void {
+  if (values.length === 0) throw new Error(`${name} must not be empty`);
+  for (const value of values) {
+    if (typeof value !== 'boolean') {
+      throw new Error(`${name} must be booleans, got ${JSON.stringify(value)}`);
     }
   }
 }
@@ -157,12 +174,8 @@ export function resolveConfig(
   }
   positiveInts('batchSizes', config.batchSizes);
   positiveInts('pointsPerSide', config.pointsPerSide);
-  if (config.lowResFilterNms.length === 0) throw new Error('lowResFilterNms must not be empty');
-  for (const value of config.lowResFilterNms) {
-    if (typeof value !== 'boolean') {
-      throw new Error(`lowResFilterNms must be booleans, got ${JSON.stringify(value)}`);
-    }
-  }
+  booleanAxis('lowResFilterNms', config.lowResFilterNms);
+  booleanAxis('lowResMaskEncode', config.lowResMaskEncode);
   if (!Number.isInteger(config.reps) || config.reps < 1) {
     throw new Error(`reps must be a positive integer, got ${JSON.stringify(config.reps)}`);
   }
@@ -173,7 +186,10 @@ export function resolveConfig(
 // ----------------------------------------------------------------------- grid
 
 export interface SweepRow {
-  /** Stable and unique: `p<pps>-<dtype>-b<batch>-<path>-<pipeline>-r<rep>`. */
+  /**
+   * Stable and unique:
+   * `p<pps>-<dtype>-b<batch>-<path>-<pipeline>-<encode>-r<rep>`.
+   */
   id: string;
   rep: number;
   /** True only for the discarded first run — see `warmUpRow`. */
@@ -183,9 +199,9 @@ export interface SweepRow {
 
 /**
  * The measured rows, in a deterministic nesting order — pointsPerSide, then
- * dtype, then batchSize, then decode path, then lowResFilterNms, then rep — so
- * two runs of the same config produce the same ids in the same order and their
- * tables line up.
+ * dtype, then batchSize, then decode path, then lowResFilterNms, then
+ * lowResMaskEncode, then rep — so two runs of the same config produce the same
+ * ids in the same order and their tables line up.
  */
 export function expandGrid(config: SweepConfig): SweepRow[] {
   const rows: SweepRow[] = [];
@@ -194,22 +210,25 @@ export function expandGrid(config: SweepConfig): SweepRow[] {
       for (const batchSize of config.batchSizes) {
         for (const path of config.decodePaths) {
           for (const lowResFilterNms of config.lowResFilterNms) {
-            for (let rep = 1; rep <= config.reps; rep += 1) {
-              rows.push({
-                id: `p${pointsPerSide}-${dtype}-b${batchSize}-${path}-${
-                  lowResFilterNms ? 'lowres' : 'fullres'
-                }-r${rep}`,
-                rep,
-                warmUp: false,
-                options: {
-                  dtype,
-                  batchSize,
-                  pointsPerSide,
-                  keepRawMasks: config.keepRawMasks,
-                  lowResFilterNms,
-                  ...decodeFlags(path),
-                },
-              });
+            for (const lowResMaskEncode of config.lowResMaskEncode) {
+              for (let rep = 1; rep <= config.reps; rep += 1) {
+                rows.push({
+                  id: `p${pointsPerSide}-${dtype}-b${batchSize}-${path}-${
+                    lowResFilterNms ? 'lowres' : 'fullres'
+                  }-${lowResMaskEncode ? 'enclow' : 'encfull'}-r${rep}`,
+                  rep,
+                  warmUp: false,
+                  options: {
+                    dtype,
+                    batchSize,
+                    pointsPerSide,
+                    keepRawMasks: config.keepRawMasks,
+                    lowResFilterNms,
+                    lowResMaskEncode,
+                    ...decodeFlags(path),
+                  },
+                });
+              }
             }
           }
         }
@@ -293,7 +312,7 @@ export function rowLabel(record: RunRecord): string {
   const o = record.options;
   return `${decodePathOf(o)} · ${o.dtype} · batch ${o.batchSize} · pps ${o.pointsPerSide} · ${
     o.lowResFilterNms ? 'lowres' : 'fullres'
-  }`;
+  } · ${o.lowResMaskEncode ? 'enc low' : 'enc full'}`;
 }
 
 // ------------------------------------------------------------------ agreement
@@ -421,7 +440,7 @@ function describeAdapter(adapter: AdapterInfo | undefined): string {
 }
 
 const COLUMNS = [
-  'rank', 'row', 'decode path', 'dtype', 'batch', 'pps', 'lowres', 'budget', 'total',
+  'rank', 'row', 'decode path', 'dtype', 'batch', 'pps', 'lowres', 'enc', 'budget', 'total',
   'model-load', 'encode', 'decode', 'filter', 'nms', 'resample', 'mask-encode',
   'raw', 'afterFilter', 'afterNms', 'returned', 'status',
 ] as const;
@@ -431,7 +450,7 @@ const COLUMNS = [
  * silently misaligns the whole table the moment a column is inserted.
  */
 const LEFT_ALIGNED: ReadonlySet<string> = new Set([
-  'rank', 'row', 'decode path', 'dtype', 'batch', 'pps', 'lowres', 'status',
+  'rank', 'row', 'decode path', 'dtype', 'batch', 'pps', 'lowres', 'enc', 'status',
 ]);
 
 /** The committed report. Ranked on `budget`; the caveat sits above the table. */
@@ -472,6 +491,7 @@ export function toMarkdown(records: readonly RunRecord[], meta: ReportMeta): str
         String(o.batchSize),
         String(o.pointsPerSide),
         o.lowResFilterNms ? 'lowres' : 'fullres',
+        o.lowResMaskEncode ? 'enclow' : 'encfull',
         ms(record.budgetMs),
         ms(record.timings?.totalMs),
         ms(p?.['model-load'].total),

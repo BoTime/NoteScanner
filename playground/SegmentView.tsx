@@ -238,6 +238,16 @@ export function SegmentView() {
             onChange={(e) => patch({ gpuResidentEmbeddings: e.target.checked })}
           />
         </label>
+        {' '}
+        <label>
+          low-res mask encode:{' '}
+          <input
+            data-testid="low-res-mask-encode"
+            type="checkbox"
+            checked={options.lowResMaskEncode}
+            onChange={(e) => patch({ lowResMaskEncode: e.target.checked })}
+          />
+        </label>
       </p>
 
       <p

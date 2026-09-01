@@ -46,6 +46,7 @@ const INITIAL_OPTIONS: RowOptions = {
   gpuResidentEmbeddings: false,
   keepRawMasks: false,
   lowResFilterNms: true,
+  lowResMaskEncode: true,
 };
 
 function ms(value: number | undefined): string {
@@ -280,6 +281,16 @@ export function CompareView({ createSegmenter, createBitmap }: CompareViewProps 
             disabled={running}
             onChange={(e) => patch({ lowResFilterNms: e.target.checked })}
           />
+        </label>{' '}
+        <label>
+          low-res mask encode:{' '}
+          <input
+            data-testid="low-res-mask-encode"
+            type="checkbox"
+            checked={options.lowResMaskEncode}
+            disabled={running}
+            onChange={(e) => patch({ lowResMaskEncode: e.target.checked })}
+          />
         </label>
       </p>
 
@@ -313,6 +324,7 @@ export function CompareView({ createSegmenter, createBitmap }: CompareViewProps 
             <th align="right">batch</th>
             <th align="right">pps</th>
             <th align="left">lowres</th>
+            <th align="left">enc</th>
             <th align="right">budget</th>
             <th align="right">total</th>
             <th align="right">decode</th>
@@ -336,6 +348,7 @@ export function CompareView({ createSegmenter, createBitmap }: CompareViewProps 
                 <td align="right">{o.batchSize}</td>
                 <td align="right">{o.pointsPerSide}</td>
                 <td>{o.lowResFilterNms ? 'lowres' : 'fullres'}</td>
+                <td>{o.lowResMaskEncode ? 'enclow' : 'encfull'}</td>
                 <td align="right"><strong>{ms(record.budgetMs)}</strong></td>
                 <td align="right">{ms(record.timings?.totalMs)}</td>
                 <td align="right">{ms(p?.decode.total)}</td>

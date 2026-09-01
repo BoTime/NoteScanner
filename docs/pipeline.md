@@ -203,9 +203,17 @@ uploaded straight to an `R8` texture (**M5**): no RGBA expansion, no PNG, no dat
 URL, no image decode. Until that lands, the same bytes are encoded as a **1-bit
 indexed PNG** with a 2-entry palette and a `tRNS` chunk (**M3**) — ~32× smaller,
 natively `<img>`-decodable, so the `maskUrl: string` contract is untouched — and
-encoded **inside the worker** (**M4**) so it never blocks the UI. At 256×256
-(**M2**) it is ~10× cheaper again. In the prototype only, **M1** deletes the
-round trip outright by handing coverage arrays to `SegmentViewer` directly.
+encoded **inside the worker** (**M4**) so it never blocks the UI.
+Encoding at the decoder's own window (**M2**) shrinks it again: the PNG is
+written at
+`min(round(lowWidth × reshapedWidth / padWidth), originalWidth)` ×
+`min(round(lowHeight × reshapedHeight / padHeight), originalHeight)` — 256×162
+on the 1024×649 sample, ~16× fewer pixels than full resolution rather than the
+~10× first estimated here — and `SegmentViewer` upscales it back to image space
+nearest-neighbour (`imageSmoothingEnabled = false`), which keeps every
+read-back pixel exactly `(255,255,255,255)` or `(0,0,0,0)`. In the prototype
+only, **M1** deletes the round trip outright by handing coverage arrays to
+`SegmentViewer` directly.
 
 **The renderer — the structural change.** `renderer/types.ts` already takes
 `Map<string, { coverage, area }>`, never an image, behind a pluggable
@@ -232,6 +240,25 @@ target dimensions.
 ~15× (A) and ~10× (B), with model inference correctly the bottleneck. Getting
 most of the way there does not require the renderer: **CPU-only changes alone are
 ~8× (A) / ~6× (B)** and ship against today's `maskUrl` contract.
+
+### What ships today
+
+Waves 1 and 2 have landed, so this section is no longer a proposal for them:
+
+- `filter` scores and thresholds at 256×256 and retains a copy of each chosen
+  candidate's logit window; no full-resolution buffer is allocated in the batch
+  loop (**F1**, **F3**, behind `lowResFilterNms`, default on).
+- `nms` runs on 256×256 coverage with a bbox prefilter and bit-packed popcounts
+  (**N1**, **N2**, **N3**).
+- Only NMS survivors are resampled, in a single pass straight from the logits
+  (**F2**), and the exact, unscaled `minMaskArea` is re-applied there — the gap
+  between the `afterNms` and `returned` counts.
+- `mask-encode` writes a 1-bit indexed PNG inside the worker (**M3**, **M4**)
+  from a SECOND resample of the same logits at the encode target above
+  (**M2**, behind `lowResMaskEncode`, default on). That second resample is
+  timed into `resample`, not into `mask-encode`.
+- The viewer still decodes the PNG back into an image-space coverage array;
+  **M1**/**M5** and the WebGL2 renderer (**F4**) remain future work.
 
 ---
 
@@ -291,8 +318,8 @@ The plan is tracked as eight issues, numbered in implementation order.
 | [#3](https://github.com/BoTime/NoteScanner/issues/3) | 1 | E1 + D1 — fp16, larger `batchSize` | measured; adoption tracked in [#12](https://github.com/BoTime/NoteScanner/issues/12) |
 | [#4](https://github.com/BoTime/NoteScanner/issues/4) | 1 | N2 + N3 — bbox prefilter, bit-packed NMS | landed |
 | [#5](https://github.com/BoTime/NoteScanner/issues/5) | 1 | M3 + M4 — 1-bit PNG, in the worker | landed |
-| [#6](https://github.com/BoTime/NoteScanner/issues/6) | 2 | F1 + N1 + F3 — carry 256² through | open |
-| [#7](https://github.com/BoTime/NoteScanner/issues/7) | 2 | M2 — encode at 256² | open |
+| [#6](https://github.com/BoTime/NoteScanner/issues/6) | 2 | F1 + N1 + F3 — carry 256² through | landed |
+| [#7](https://github.com/BoTime/NoteScanner/issues/7) | 2 | M2 — encode at 256² | landed |
 | [#8](https://github.com/BoTime/NoteScanner/issues/8) | 3 | F2 — single-pass resample | open |
 | [#9](https://github.com/BoTime/NoteScanner/issues/9) | 4 | M5 + F4 — WebGL2 renderer | open |
 

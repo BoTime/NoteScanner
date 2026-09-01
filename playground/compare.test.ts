@@ -29,6 +29,7 @@ function rowOptions(overrides: Partial<RowOptions> = {}): RowOptions {
     gpuResidentEmbeddings: false,
     keepRawMasks: false,
     lowResFilterNms: true,
+    lowResMaskEncode: true,
     ...overrides,
   };
 }
@@ -106,8 +107,8 @@ describe('expandGrid', () => {
     const second = expandGrid(DEFAULT_SWEEP_CONFIG).map((row) => row.id);
     expect(second).toEqual(first);
     expect(new Set(first).size).toBe(first.length);
-    expect(first[0]).toBe('p16-fp32-b8-none-lowres-r1');
-    expect(first[15]).toBe('p16-fp16-b32-both-lowres-r1');
+    expect(first[0]).toBe('p16-fp32-b8-none-lowres-enclow-r1');
+    expect(first[15]).toBe('p16-fp16-b32-both-lowres-enclow-r1');
   });
 
   it('widens to 32 rows under --full and multiplies by --reps, without editing code (AC6)', () => {
@@ -145,8 +146,8 @@ describe('expandGrid', () => {
       }),
     );
     expect(rows.map((row) => row.id)).toEqual([
-      'p16-fp32-b8-none-fullres-r1',
-      'p16-fp32-b8-none-lowres-r1',
+      'p16-fp32-b8-none-fullres-enclow-r1',
+      'p16-fp32-b8-none-lowres-enclow-r1',
     ]);
     // The baseline runs FIRST, so the Compare tab's retained mask set is the
     // pre-change one and every later row is compared against it.
@@ -156,6 +157,36 @@ describe('expandGrid', () => {
   it('rejects a lowResFilterNms axis that is empty or not boolean', () => {
     expect(() => resolveConfig({ lowResFilterNms: [] })).toThrow(/lowResFilterNms/);
     expect(() => resolveConfig({ lowResFilterNms: ['yes' as never] })).toThrow(/lowResFilterNms/);
+  });
+
+  it('walks the encode target as its own axis, innermost after the pipeline flag', () => {
+    const rows = expandGrid(
+      resolveConfig({
+        decodePaths: ['none'],
+        batchSizes: [32],
+        dtypes: ['fp32'],
+        pointsPerSide: [16],
+        lowResFilterNms: [true],
+        lowResMaskEncode: [false, true],
+      }),
+    );
+    expect(rows.map((row) => row.id)).toEqual([
+      'p16-fp32-b32-none-lowres-encfull-r1',
+      'p16-fp32-b32-none-lowres-enclow-r1',
+    ]);
+    expect(rows.map((row) => row.options.lowResMaskEncode)).toEqual([false, true]);
+  });
+
+  it('defaults the encode axis to the shipped value only', () => {
+    expect(DEFAULT_SWEEP_CONFIG.lowResMaskEncode).toEqual([true]);
+    expect(expandGrid(DEFAULT_SWEEP_CONFIG)).toHaveLength(16);
+  });
+
+  it('rejects a lowResMaskEncode axis that is empty or not boolean', () => {
+    expect(() => resolveConfig({ lowResMaskEncode: [] })).toThrow(/lowResMaskEncode/);
+    expect(() => resolveConfig({ lowResMaskEncode: ['yes' as never] })).toThrow(
+      /lowResMaskEncode/,
+    );
   });
 });
 
@@ -258,6 +289,20 @@ describe('toMarkdown', () => {
     // `status` is the last column and is left-aligned; a positional rule
     // silently misaligns it the moment a column is added.
     expect(alignment.trim().endsWith('--- |')).toBe(true);
+  });
+
+  it('labels and tabulates a row from the encode target it was captured with', () => {
+    const record = okRecord('p16-fp32-b32-none-lowres-encfull-r1', 1000, {
+      batchSize: 32,
+      lowResMaskEncode: false,
+    });
+    expect(rowLabel(record)).toContain('enc full');
+    // `meta` is the fixture the other toMarkdown tests in this file use.
+    const md = toMarkdown([record], meta);
+    expect(md).toContain('| pps | lowres | enc |');
+    // Adjacent cells, so the new column lands beside `lowres` rather than
+    // anywhere that happens to render.
+    expect(md).toContain('| lowres | encfull |');
   });
 });
 
