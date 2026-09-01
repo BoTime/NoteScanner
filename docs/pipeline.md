@@ -250,9 +250,9 @@ Waves 1 and 2 have landed, so this section is no longer a proposal for them:
   loop (**F1**, **F3**, behind `lowResFilterNms`, default on).
 - `nms` runs on 256×256 coverage with a bbox prefilter and bit-packed popcounts
   (**N1**, **N2**, **N3**).
-- Only NMS survivors are resampled, in a single pass straight from the logits
-  (**F2**), and the exact, unscaled `minMaskArea` is re-applied there — the gap
-  between the `afterNms` and `returned` counts.
+- Only NMS survivors are resampled, in a single pass straight from the logits,
+  and the exact, unscaled `minMaskArea` is re-applied there — the gap between
+  the `afterNms` and `returned` counts.
 - `mask-encode` writes a 1-bit indexed PNG inside the worker (**M3**, **M4**)
   from a SECOND resample of the same logits at the encode target above
   (**M2**, behind `lowResMaskEncode`, default on). That second resample is

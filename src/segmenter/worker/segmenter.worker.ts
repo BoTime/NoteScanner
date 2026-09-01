@@ -447,6 +447,10 @@ async function run(request: SegmenterRequest): Promise<void> {
         // hiding the moved cost inside the very number this change claims.
         const encodeMask = mask ? resolveEncodeMask(candidate, mask, plan) : null;
         timings.record('resample', performance.now() - resampleStarted);
+        // `!encodeMask` is true exactly when `!mask` — `resolveEncodeMask`
+        // returns a non-nullable `BinaryMask` — but TypeScript does not
+        // correlate the two, and without it `encodeMask` stays
+        // `BinaryMask | null` below. Not redundant; do not simplify it away.
         if (!mask || !encodeMask) {
           // Passed the coarse pre-NMS gate, failed the exact full-resolution
           // `minMaskArea`. Visible as the gap between afterNms and returned.

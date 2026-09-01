@@ -333,6 +333,15 @@ describe('resolveEncodeSize', () => {
     expect(encodeSize(samGeometry(200, 150, 1024, 768))).toEqual([200, 150]);
   });
 
+  it('never rounds an axis away to zero, however extreme the aspect ratio', () => {
+    // A 2048x3 strip resizes to 1024x1 inside the pad, so the unclamped
+    // window is round(256 * 1 / 1024) = round(0.25) = 0 on the vertical axis —
+    // and `resampleThresholdMask` throws on a zero dimension rather than
+    // degrading, surfacing as SegmenterFailure('resample'). Floored at 1, the
+    // same way `lowResMinArea` floors its own scaled computation.
+    expect(encodeSize(samGeometry(2048, 3, 1024, 1))).toEqual([256, 1]);
+  });
+
   it('is full resolution when lowResMaskEncode is off (AC5)', () => {
     expect(encodeSize(samGeometry(1024, 649, 1024, 649), { lowResMaskEncode: false })).toEqual([
       1024, 649,

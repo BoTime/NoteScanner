@@ -156,6 +156,12 @@ export function lowResMinArea(
  * handed a mask LARGER than full resolution, which is the opposite of the
  * point.
  *
+ * FLOORED at 1 on each axis, following `lowResMinArea` above: a rounded window
+ * reaches 0 on an extreme aspect ratio (roughly 683:1, where `reshapedHeight`
+ * lands at 1 and `256 * 1 / 1024` rounds to 0), and a 0 handed to
+ * `resampleThresholdMask` throws rather than degrading. Both siblings guard the
+ * same shape of computation the same way.
+ *
  * Returns full resolution on either opt-out: `lowResMaskEncode` off, or
  * `lowResFilterNms` off (see the module comment — the baseline path retains no
  * logits to resample from).
@@ -169,11 +175,11 @@ export function resolveEncodeSize(
   }
   return {
     width: Math.min(
-      Math.round((geometry.lowWidth * geometry.reshapedWidth) / geometry.padWidth),
+      Math.max(1, Math.round((geometry.lowWidth * geometry.reshapedWidth) / geometry.padWidth)),
       geometry.originalWidth,
     ),
     height: Math.min(
-      Math.round((geometry.lowHeight * geometry.reshapedHeight) / geometry.padHeight),
+      Math.max(1, Math.round((geometry.lowHeight * geometry.reshapedHeight) / geometry.padHeight)),
       geometry.originalHeight,
     ),
   };
