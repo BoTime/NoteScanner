@@ -32,14 +32,11 @@ import {
 } from './compare';
 import sampleUrl from './sample/cafe-table.jpg';
 
-const DTYPE_CHOICES = ['fp32', 'fp16'] as const;
-/**
- * 64 is offered even though `DEFAULT_SWEEP_CONFIG` excludes it: issue #12
- * measured it dying inside `post_process_masks`, and re-confirming that by
- * hand should not require editing code.
- */
-const BATCH_SIZE_CHOICES = [8, 16, 32, 64] as const;
-const POINTS_PER_SIDE_CHOICES = [16, 32] as const;
+import {
+  BATCH_SIZE_CHOICES,
+  DTYPE_CHOICES,
+  POINTS_PER_SIDE_CHOICES,
+} from './option-choices';
 
 const INITIAL_OPTIONS: RowOptions = {
   dtype: 'fp32',

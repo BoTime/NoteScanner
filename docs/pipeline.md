@@ -171,9 +171,15 @@ ViT encoder ~1.5-2× faster. Optionally cache embeddings across runs (**E2**) so
 re-running with different thresholds does not re-encode the same image.
 
 **`decode` — unchanged in shape, larger batches.** `batchSize` 8 pays fixed ORT
-dispatch overhead 32× in Run A and 128× in Run B; raising it to 32 or 64
-(**D1**) removes most of that. fp16 helps here too. This stage stays the floor,
-and that is the intended end state: model inference should be the bottleneck.
+dispatch overhead 32× in Run A and 128× in Run B; raising it to 32 (**D1**)
+removes part of that, and is now the default. Measured, the effect is smaller
+than this section originally claimed and does not extend upward: **64 is
+unusable**, dying with `Array buffer allocation failed`, and 32 is bounded above
+by memory rather than by diminishing returns
+(`docs/measurements/2026-08-28-decode-sweep.md`, and issue #12). fp16 helps here
+too, but it also changes the kept-mask count in both directions, so it stays a
+product decision rather than a default. This stage stays the floor, and that is
+the intended end state: model inference should be the bottleneck.
 
 **`filter` — stops upsampling.** The candidate mask stays at 256×256 throughout.
 Score-and-select and the threshold/area test run at low resolution (**F3**), and
