@@ -1,0 +1,9 @@
+{
+  "decodePaths": ["none"],
+  "batchSizes": [8],
+  "dtypes": ["fp32"],
+  "pointsPerSide": [16, 32],
+  "lowResFilterNms": [false, true],
+  "keepRawMasks": false,
+  "reps": 1
+}

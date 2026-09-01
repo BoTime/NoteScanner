@@ -1,0 +1,393 @@
+{
+  "generatedAt": "2026-09-01T01:07:27.128Z",
+  "adapter": {
+    "vendor": "apple",
+    "architecture": "metal-3",
+    "device": "",
+    "description": "",
+    "software": false
+  },
+  "config": {
+    "decodePaths": [
+      "none"
+    ],
+    "batchSizes": [
+      8
+    ],
+    "dtypes": [
+      "fp32"
+    ],
+    "pointsPerSide": [
+      16,
+      32
+    ],
+    "lowResFilterNms": [
+      false,
+      true
+    ],
+    "keepRawMasks": false,
+    "reps": 1
+  },
+  "rows": [
+    {
+      "rowId": "p16-fp32-b8-none-fullres-r1",
+      "options": {
+        "dtype": "fp32",
+        "batchSize": 8,
+        "pointsPerSide": 16,
+        "overlapDecodeFilter": false,
+        "gpuResidentEmbeddings": false,
+        "keepRawMasks": false,
+        "lowResFilterNms": false
+      },
+      "status": "ok",
+      "timings": {
+        "phases": {
+          "model-load": {
+            "p50": 650.1999999880791,
+            "p95": 650.1999999880791,
+            "max": 650.1999999880791,
+            "count": 1,
+            "total": 650.1999999880791
+          },
+          "encode": {
+            "p50": 1219.300000011921,
+            "p95": 1219.300000011921,
+            "max": 1219.300000011921,
+            "count": 1,
+            "total": 1219.300000011921
+          },
+          "decode": {
+            "p50": 171.60000002384186,
+            "p95": 174.89999997615814,
+            "max": 205.20000004768372,
+            "count": 32,
+            "total": 5531.400000214577
+          },
+          "filter": {
+            "p50": 22.19999998807907,
+            "p95": 29.899999976158142,
+            "max": 29.900000035762787,
+            "count": 32,
+            "total": 692.9999998211861
+          },
+          "nms": {
+            "p50": 292,
+            "p95": 292,
+            "max": 292,
+            "count": 1,
+            "total": 292
+          },
+          "resample": {
+            "p50": 0,
+            "p95": 0,
+            "max": 0,
+            "count": 36,
+            "total": 0
+          },
+          "mask-encode": {
+            "p50": 0.800000011920929,
+            "p95": 1.0999999642372131,
+            "max": 3.300000011920929,
+            "count": 36,
+            "total": 32.40000003576279
+          }
+        },
+        "filterSubPhases": {
+          "select": {
+            "p50": 3.599999964237213,
+            "p95": 4.399999976158142,
+            "max": 4.599999964237213,
+            "count": 32,
+            "total": 111.39999979734421
+          },
+          "threshold": {
+            "p50": 18.19999998807907,
+            "p95": 26.100000023841858,
+            "max": 26.400000035762787,
+            "count": 32,
+            "total": 581.5
+          }
+        },
+        "totalMs": 8448.200000047684
+      },
+      "counts": {
+        "raw": 768,
+        "afterFilter": 242,
+        "afterNms": 36,
+        "returned": 36
+      },
+      "budgetMs": 7798.000000059605
+    },
+    {
+      "rowId": "p16-fp32-b8-none-lowres-r1",
+      "options": {
+        "dtype": "fp32",
+        "batchSize": 8,
+        "pointsPerSide": 16,
+        "overlapDecodeFilter": false,
+        "gpuResidentEmbeddings": false,
+        "keepRawMasks": false,
+        "lowResFilterNms": true
+      },
+      "status": "ok",
+      "timings": {
+        "phases": {
+          "model-load": {
+            "p50": 666.1999999880791,
+            "p95": 666.1999999880791,
+            "max": 666.1999999880791,
+            "count": 1,
+            "total": 666.1999999880791
+          },
+          "encode": {
+            "p50": 1167.800000011921,
+            "p95": 1167.800000011921,
+            "max": 1167.800000011921,
+            "count": 1,
+            "total": 1167.800000011921
+          },
+          "decode": {
+            "p50": 175.19999998807907,
+            "p95": 179.4000000357628,
+            "max": 201,
+            "count": 32,
+            "total": 5621.700000107288
+          },
+          "filter": {
+            "p50": 5.400000035762787,
+            "p95": 8,
+            "max": 9.199999988079071,
+            "count": 32,
+            "total": 176.79999989271164
+          },
+          "nms": {
+            "p50": 37.5,
+            "p95": 37.5,
+            "max": 37.5,
+            "count": 1,
+            "total": 37.5
+          },
+          "resample": {
+            "p50": 1.2000000476837158,
+            "p95": 1.699999988079071,
+            "max": 4.399999976158142,
+            "count": 34,
+            "total": 45.89999997615814
+          },
+          "mask-encode": {
+            "p50": 0.8999999761581421,
+            "p95": 1.699999988079071,
+            "max": 4.400000035762787,
+            "count": 34,
+            "total": 35.69999998807907
+          }
+        },
+        "filterSubPhases": {
+          "select": {
+            "p50": 3.800000011920929,
+            "p95": 5,
+            "max": 5.100000023841858,
+            "count": 32,
+            "total": 123.99999994039536
+          },
+          "threshold": {
+            "p50": 1.5999999642372131,
+            "p95": 4.099999964237213,
+            "max": 4.300000011920929,
+            "count": 32,
+            "total": 52.69999998807907
+          }
+        },
+        "totalMs": 7779.199999988079
+      },
+      "counts": {
+        "raw": 768,
+        "afterFilter": 240,
+        "afterNms": 34,
+        "returned": 34
+      },
+      "budgetMs": 7113
+    },
+    {
+      "rowId": "p32-fp32-b8-none-fullres-r1",
+      "options": {
+        "dtype": "fp32",
+        "batchSize": 8,
+        "pointsPerSide": 32,
+        "overlapDecodeFilter": false,
+        "gpuResidentEmbeddings": false,
+        "keepRawMasks": false,
+        "lowResFilterNms": false
+      },
+      "status": "ok",
+      "timings": {
+        "phases": {
+          "model-load": {
+            "p50": 651.1000000238419,
+            "p95": 651.1000000238419,
+            "max": 651.1000000238419,
+            "count": 1,
+            "total": 651.1000000238419
+          },
+          "encode": {
+            "p50": 1164.199999988079,
+            "p95": 1164.199999988079,
+            "max": 1164.199999988079,
+            "count": 1,
+            "total": 1164.199999988079
+          },
+          "decode": {
+            "p50": 171.89999997615814,
+            "p95": 176.10000002384186,
+            "max": 204.69999998807907,
+            "count": 128,
+            "total": 22084.400000154972
+          },
+          "filter": {
+            "p50": 21.5,
+            "p95": 29,
+            "max": 32.09999996423721,
+            "count": 128,
+            "total": 2647
+          },
+          "nms": {
+            "p50": 1045.699999988079,
+            "p95": 1045.699999988079,
+            "max": 1045.699999988079,
+            "count": 1,
+            "total": 1045.699999988079
+          },
+          "resample": {
+            "p50": 0,
+            "p95": 0,
+            "max": 0,
+            "count": 57,
+            "total": 0
+          },
+          "mask-encode": {
+            "p50": 0.800000011920929,
+            "p95": 1,
+            "max": 3.699999988079071,
+            "count": 57,
+            "total": 50.30000001192093
+          }
+        },
+        "filterSubPhases": {
+          "select": {
+            "p50": 3.599999964237213,
+            "p95": 4.699999988079071,
+            "max": 5.399999976158142,
+            "count": 128,
+            "total": 438.79999989271164
+          },
+          "threshold": {
+            "p50": 17.69999998807907,
+            "p95": 24.200000047683716,
+            "max": 28.299999952316284,
+            "count": 128,
+            "total": 2208.100000143051
+          }
+        },
+        "totalMs": 27671.30000001192
+      },
+      "counts": {
+        "raw": 3072,
+        "afterFilter": 951,
+        "afterNms": 57,
+        "returned": 57
+      },
+      "budgetMs": 27020.19999998808
+    },
+    {
+      "rowId": "p32-fp32-b8-none-lowres-r1",
+      "options": {
+        "dtype": "fp32",
+        "batchSize": 8,
+        "pointsPerSide": 32,
+        "overlapDecodeFilter": false,
+        "gpuResidentEmbeddings": false,
+        "keepRawMasks": false,
+        "lowResFilterNms": true
+      },
+      "status": "ok",
+      "timings": {
+        "phases": {
+          "model-load": {
+            "p50": 629.1999999880791,
+            "p95": 629.1999999880791,
+            "max": 629.1999999880791,
+            "count": 1,
+            "total": 629.1999999880791
+          },
+          "encode": {
+            "p50": 1267.3999999761581,
+            "p95": 1267.3999999761581,
+            "max": 1267.3999999761581,
+            "count": 1,
+            "total": 1267.3999999761581
+          },
+          "decode": {
+            "p50": 174.39999997615814,
+            "p95": 178.39999997615814,
+            "max": 208.10000002384186,
+            "count": 128,
+            "total": 22363.700000226498
+          },
+          "filter": {
+            "p50": 5.300000011920929,
+            "p95": 6.699999988079071,
+            "max": 8.400000035762787,
+            "count": 128,
+            "total": 658.5000000596046
+          },
+          "nms": {
+            "p50": 103.39999997615814,
+            "p95": 103.39999997615814,
+            "max": 103.39999997615814,
+            "count": 1,
+            "total": 103.39999997615814
+          },
+          "resample": {
+            "p50": 1.2000000476837158,
+            "p95": 1.399999976158142,
+            "max": 4.300000011920929,
+            "count": 53,
+            "total": 68.50000017881393
+          },
+          "mask-encode": {
+            "p50": 0.8999999761581421,
+            "p95": 1.300000011920929,
+            "max": 3.400000035762787,
+            "count": 53,
+            "total": 50.499999821186066
+          }
+        },
+        "filterSubPhases": {
+          "select": {
+            "p50": 3.799999952316284,
+            "p95": 4.600000023841858,
+            "max": 5.199999988079071,
+            "count": 128,
+            "total": 471.1000002026558
+          },
+          "threshold": {
+            "p50": 1.399999976158142,
+            "p95": 2.399999976158142,
+            "max": 4.700000047683716,
+            "count": 128,
+            "total": 187.39999985694885
+          }
+        },
+        "totalMs": 25171.799999952316
+      },
+      "counts": {
+        "raw": 3072,
+        "afterFilter": 947,
+        "afterNms": 53,
+        "returned": 53
+      },
+      "budgetMs": 24542.599999964237
+    }
+  ]
+}
