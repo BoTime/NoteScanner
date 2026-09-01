@@ -362,8 +362,9 @@ export function SegmentView() {
           </table>
           <p data-testid="mask-counts">
             masks: {result.counts.raw} raw → {result.counts.afterFilter} after filter →{' '}
-            <strong>{result.counts.afterNms}</strong> after dedup. The last number is the
-            one that matters; raw counts are misleading.
+            {result.counts.afterNms} after dedup → <strong>{result.counts.returned}</strong>{' '}
+            returned. The last number is the one that matters; a gap between the
+            last two is the full-resolution area re-check dropping a mask.
           </p>
           {result.nmsComparison && (
             <p data-testid="nms-comparison">

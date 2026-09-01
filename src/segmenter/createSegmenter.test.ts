@@ -61,7 +61,7 @@ function doneMessage(masks: EncodedMask[] = []): Extract<SegmenterResponse, { ty
     // 42 deliberately differs from any main-thread clock reading, so a test
     // can prove totalMs is measured here and not copied from the worker.
     timings: createTimingAccumulator().report(42),
-    counts: { raw: 24, afterFilter: 9, afterNms: masks.length },
+    counts: { raw: 24, afterFilter: 9, afterNms: masks.length, returned: masks.length },
   };
 }
 
@@ -109,7 +109,7 @@ describe('createSegmenter', () => {
 
     const result = await pending;
     expect(result.segments).toEqual([]);
-    expect(result.counts).toEqual({ raw: 24, afterFilter: 9, afterNms: 0 });
+    expect(result.counts).toEqual({ raw: 24, afterFilter: 9, afterNms: 0, returned: 0 });
     expect(Object.keys(result.timings.phases)).toEqual([...PHASE_ORDER]);
     expect(result.timings.phases['mask-encode'].count).toBe(0);
     // totalMs is measured on the main thread, not copied from the worker.
@@ -120,7 +120,7 @@ describe('createSegmenter', () => {
     const workerTimings = createTimingAccumulator();
     workerTimings.recordFilterSub('select', 4);
     workerTimings.recordFilterSub('select', 6);
-    workerTimings.recordFilterSub('resample', 100);
+    workerTimings.recordFilterSub('threshold', 100);
 
     const segmenter = createSegmenter({ createWorker: spawn });
     const pending = segmenter.segment(fakeBitmap());
@@ -130,7 +130,7 @@ describe('createSegmenter', () => {
       width: 2,
       height: 1,
       timings: workerTimings.report(42),
-      counts: { raw: 24, afterFilter: 9, afterNms: 0 },
+      counts: { raw: 24, afterFilter: 9, afterNms: 0, returned: 0 },
     });
 
     const result = await pending;
@@ -140,8 +140,8 @@ describe('createSegmenter', () => {
     expect(Object.keys(result.timings.filterSubPhases)).toEqual([...FILTER_SUBSTEP_ORDER]);
     expect(result.timings.filterSubPhases.select.total).toBe(10);
     expect(result.timings.filterSubPhases.select.p50).toBe(6);
-    expect(result.timings.filterSubPhases.resample.total).toBe(100);
-    expect(result.timings.filterSubPhases.resample.p50).toBe(100);
+    expect(result.timings.filterSubPhases.threshold.total).toBe(100);
+    expect(result.timings.filterSubPhases.threshold.p50).toBe(100);
   });
 
   it('rebuilds a zero row for a sub-step the worker never recorded', async () => {
@@ -156,16 +156,16 @@ describe('createSegmenter', () => {
       width: 2,
       height: 1,
       timings: workerTimings.report(42),
-      counts: { raw: 24, afterFilter: 0, afterNms: 0 },
+      counts: { raw: 24, afterFilter: 0, afterNms: 0, returned: 0 },
     });
 
     const result = await pending;
-    // A batch that selects no masks never calls `recordSub('resample')`, so
+    // A batch that selects no masks never calls `recordSub('threshold')`, so
     // the report the main thread rebuilds has to carry that sub-step through
     // as a zero row rather than dropping the key. `core/timing.test.ts` covers
     // the accumulator minting that row; this covers the rebuild preserving it.
-    expect(result.timings.filterSubPhases.resample.count).toBe(0);
-    expect(result.timings.filterSubPhases.resample.total).toBe(0);
+    expect(result.timings.filterSubPhases.threshold.count).toBe(0);
+    expect(result.timings.filterSubPhases.threshold.total).toBe(0);
   });
 
   it('maps each encoded mask into a ViewerSegment without re-encoding', async () => {
@@ -182,7 +182,7 @@ describe('createSegmenter', () => {
       width: 2,
       height: 1,
       timings: createTimingAccumulator().report(1),
-      counts: { raw: 3, afterFilter: 2, afterNms: 2 },
+      counts: { raw: 3, afterFilter: 2, afterNms: 2, returned: 2 },
     });
 
     const result = await pending;
@@ -205,7 +205,7 @@ describe('createSegmenter', () => {
       width: 2,
       height: 1,
       timings: workerTimings.report(42),
-      counts: { raw: 3, afterFilter: 1, afterNms: 1 },
+      counts: { raw: 3, afterFilter: 1, afterNms: 1, returned: 1 },
     });
 
     const result = await pending;
@@ -320,7 +320,7 @@ describe('createSegmenter', () => {
       width: 2,
       height: 1,
       timings: createTimingAccumulator().report(42),
-      counts: { raw: 24, afterFilter: 9, afterNms: 0 },
+      counts: { raw: 24, afterFilter: 9, afterNms: 0, returned: 0 },
       nmsComparison: { referenceMs: 900, fastMs: 30, identical: true },
     });
 
@@ -373,5 +373,39 @@ describe('createSegmenter', () => {
     // Absent, not `undefined`: a run that did not ask for masks must not carry
     // the key at all, so `'rawMasks' in result` is a usable question.
     expect('rawMasks' in plain).toBe(false);
+  });
+
+  it('defaults lowResFilterNms ON and passes an explicit false through (AC5)', async () => {
+    const segmenter = createSegmenter({ createWorker: spawn });
+    const first = segmenter.segment(fakeBitmap());
+    // The one flag in DEFAULT_SEGMENTER_OPTIONS that is true: the low-res
+    // pipeline is what ships, and the old path is the opt-in baseline.
+    expect(FakeWorker.instances[0].posted[0].options.lowResFilterNms).toBe(true);
+    FakeWorker.instances[0].emit(doneMessage());
+    await first;
+
+    const second = segmenter.segment(fakeBitmap(), { lowResFilterNms: false });
+    expect(FakeWorker.instances[1].posted[0].options.lowResFilterNms).toBe(false);
+    FakeWorker.instances[1].emit(doneMessage());
+    await second;
+  });
+
+  it('reports the returned count separately from afterNms (AC11)', async () => {
+    const segmenter = createSegmenter({ createWorker: spawn });
+    const pending = segmenter.segment(fakeBitmap());
+    FakeWorker.instances[0].emit({
+      type: 'done',
+      masks: [{ maskUrl: 'data:image/png;base64,aGk=', area: 1 }],
+      width: 2,
+      height: 1,
+      timings: createTimingAccumulator().report(1),
+      // Two masks survived NMS; the full-resolution area re-check dropped one.
+      counts: { raw: 24, afterFilter: 9, afterNms: 2, returned: 1 },
+    });
+
+    const result = await pending;
+    expect(result.counts.afterNms).toBe(2);
+    expect(result.counts.returned).toBe(1);
+    expect(result.segments).toHaveLength(1);
   });
 });

@@ -4,6 +4,11 @@ import type { ViewerSegment } from '../../types';
  * The phases the segmenter times, in the order the playground's results table
  * renders them. Every one of them happens inside the worker — including
  * `mask-encode`, which used to run on the main thread.
+ *
+ * `resample` sits between `nms` and `mask-encode` because that is where the
+ * survivor resample now happens: once per mask that SURVIVED dedup, fused with
+ * the encode. Keeping it out of `filter` is what makes a before/after on
+ * `filter` and `nms` read honestly instead of hiding the moved cost.
  */
 export const PHASE_ORDER = [
   'model-load',
@@ -11,6 +16,7 @@ export const PHASE_ORDER = [
   'decode',
   'filter',
   'nms',
+  'resample',
   'mask-encode',
 ] as const;
 
@@ -23,11 +29,13 @@ export type SegmentationPhase = (typeof PHASE_ORDER)[number];
  * be thrown, and summing the results table's total column would count
  * `filter` twice.
  *
- * `resample` is one region, not two: the upsample and the threshold are a
- * single fused loop in `resampleThresholdMask`, and reporting them separately
- * would ship a permanently-zero row.
+ * CONVENTION: `threshold` is the per-candidate RETENTION region, whatever that
+ * costs on the path in force. With `lowResFilterNms` on it is a 256x256
+ * binarize plus the scaled area gate; with it off it is the full-resolution
+ * `resampleThresholdMask` the baseline path still does inside `filter`. The
+ * two sub-steps tile the stage exactly either way.
  */
-export const FILTER_SUBSTEP_ORDER = ['select', 'resample'] as const;
+export const FILTER_SUBSTEP_ORDER = ['select', 'threshold'] as const;
 
 export type FilterSubstep = (typeof FILTER_SUBSTEP_ORDER)[number];
 
@@ -104,6 +112,31 @@ export interface SegmenterOptions {
    * must never enter the worker's session cache key.
    */
   keepRawMasks: boolean;
+  /**
+   * Carry each chosen candidate through the filter and NMS stages at the
+   * decoder's native 256x256 instead of at full image resolution, and resample
+   * only the survivors — fused with the PNG encode.
+   *
+   * DEFAULT TRUE. This is the shipped pipeline; the flag exists so the OLD one
+   * survives as a measurement baseline, exactly as `dedupeMasksReference` does.
+   * Turning it off restores the pre-change full-resolution path.
+   *
+   * It is not behaviour-preserving, and deliberately so. Two things can move:
+   * IoU computed at 256x256 can flip a borderline dedupe decision, and the
+   * scaled pre-NMS area gate (see `lowResMinArea`) is coarser than
+   * `minMaskArea` and can drop a thin mask the full-resolution gate would have
+   * kept. The RETURNED set is still exact against this option's documented
+   * meaning, because `minMaskArea` is re-applied unscaled after the survivor
+   * resample. `docs/measurements/` carries the measured delta.
+   *
+   * A retained candidate costs 256 KB of logits plus 64 KB of coverage,
+   * independent of image size — where the old path cost `width * height` bytes
+   * per candidate, which is 12.2 MB each on a 12 MP photo.
+   *
+   * Like `keepRawMasks`, and unlike `gpuResidentEmbeddings`, it changes nothing
+   * about the ONNX sessions and must never enter the worker's session cache key.
+   */
+  lowResFilterNms: boolean;
 }
 
 /**
@@ -140,6 +173,7 @@ export const DEFAULT_SEGMENTER_OPTIONS: SegmenterOptions = {
   overlapDecodeFilter: false,
   gpuResidentEmbeddings: false,
   keepRawMasks: false,
+  lowResFilterNms: true,
 };
 
 export interface PhaseTiming {
@@ -167,10 +201,17 @@ export interface TimingReport {
 export interface SegmentationCounts {
   /** Every mask the decoder produced, before any filtering. */
   raw: number;
-  /** Survivors of the stability, best-of-three and minimum-area filters. */
+  /** Survivors of the stability, best-of-three and pre-NMS area filters. */
   afterFilter: number;
-  /** Survivors of NMS dedup — the only count that means anything. */
+  /** Survivors of NMS dedup. NOT the returned count — see `returned`. */
   afterNms: number;
+  /**
+   * Masks actually returned: NMS survivors that also passed the exact,
+   * unscaled `minMaskArea` re-check at full resolution. Equal to `afterNms`
+   * unless that re-check dropped something, which is precisely the case a
+   * silently shrinking result set would otherwise hide.
+   */
+  returned: number;
 }
 
 /**

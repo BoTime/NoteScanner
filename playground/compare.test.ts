@@ -47,7 +47,7 @@ function okRecord(rowId: string, budget: number, overrides: Partial<RowOptions> 
     options: rowOptions(overrides),
     status: 'ok',
     timings,
-    counts: { raw: 96, afterFilter: 31, afterNms: 12 },
+    counts: { raw: 96, afterFilter: 31, afterNms: 12, returned: 12 },
     budgetMs: budgetMsOf(timings),
   };
 }

@@ -24,7 +24,7 @@ function stubResult(totalMs: number): SegmentationResult {
   return {
     segments: [],
     timings: accumulator.report(totalMs),
-    counts: { raw: 96, afterFilter: 31, afterNms: 12 },
+    counts: { raw: 96, afterFilter: 31, afterNms: 12, returned: 12 },
   };
 }
 
