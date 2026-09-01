@@ -57,6 +57,13 @@ to `createCanvas2DRenderer` otherwise. All three are exported. The `Renderer`
 interface takes coverage arrays, not images — see
 [issue #9](https://github.com/BoTime/NoteScanner/issues/9).
 
+Each mounted viewer holds one live WebGL2 context for as long as it stays
+mounted. Browsers cap how many contexts can be live at once and evict the
+oldest on overflow, which can blank an on-screen viewer that was not the one
+that pushed past the cap. An app mounting many viewers at once should pass
+`renderer={createCanvas2DRenderer}` explicitly rather than rely on the
+default.
+
 ## Development
 
 ```bash

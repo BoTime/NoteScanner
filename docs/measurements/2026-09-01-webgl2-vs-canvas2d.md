@@ -78,7 +78,12 @@ base image is asymmetric on both axes: its checker term is
 (18/255 under the dim wash) when mirrored on either axis.
 
 Measured, by scoring each canvas2d baseline against the MIRROR of the webgl2
-frame from the same run (chromium):
+frame from the same run (chromium), with a throwaway scoring pass that is not
+part of the committed spec suite — it is not re-run automatically, and
+reproducing the table means mirroring a captured frame and re-scoring it by
+hand the same way. The reasoning above (the fixture geometry and the
+`makeBase` checker formula) is what the committed suite actually enforces on
+every run; this table is the one-time measurement that reasoning predicts:
 
 | scene | true | vertical flip | horizontal flip | gate |
 | --- | --- | --- | --- | --- |

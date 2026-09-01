@@ -256,6 +256,10 @@ test('AC7: draw() during context loss is silent, and the scene comes back after 
   const result = await page.evaluate((spec) => window.__harness.loseAndRestore(spec), ONE_MASK);
   test.skip(!result.supported, 'this engine does not expose WEBGL_lose_context');
   expect(result.threwWhileLost).toBe(false);
+  // Falsifiable, unlike threwWhileLost alone: every GL call inside a lost
+  // context is a silent no-op by spec, so a missing guard would still not
+  // throw. A draw() that actually reached the composite pass increments this.
+  expect(result.drawCallsWhileLost).toBe(0);
   const before: Frame = { width: result.width, height: result.height, pixels: result.before };
   const after: Frame = { width: result.width, height: result.height, pixels: result.after };
   const differing = disagreements(before, after);

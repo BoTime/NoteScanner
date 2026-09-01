@@ -86,6 +86,24 @@ if (typeof WebGL2RenderingContext !== 'undefined') {
   };
 }
 
+// --- test-only draw-call accounting (AC7) ----------------------------------
+// AC7's "paints nothing while lost" half needs a signal that fails if the
+// no-op guard in `paint()` is ever removed. Asserting only `threwWhileLost`
+// does not do that: with the guard gone, every GL call inside a lost context
+// is a silent no-op by spec (ensureTargets / ensureBase early-return on stale
+// handles, and the draw calls themselves do nothing), so nothing throws
+// either way. Counting `drawArrays` calls closes that hole — a `draw()` that
+// actually reaches the composite pass increments it, guard or no guard.
+let drawArraysCount = 0;
+if (typeof WebGL2RenderingContext !== 'undefined') {
+  const proto = WebGL2RenderingContext.prototype;
+  const realDrawArrays = proto.drawArrays;
+  proto.drawArrays = function (this: WebGL2RenderingContext, ...args: Parameters<typeof realDrawArrays>) {
+    drawArraysCount += 1;
+    return realDrawArrays.apply(this, args);
+  };
+}
+
 // --- test-only in-flight async-work accounting ----------------------------
 // canvas2d does not finish a frame synchronously: `rebuildSelectedLayers`
 // awaits `createImageBitmap` and only then paints the bright/outline layers.
@@ -279,6 +297,10 @@ function eventOrTimeout(target: EventTarget, type: string, ms = 10000): Promise<
 export interface LossResult {
   supported: boolean;
   threwWhileLost: boolean;
+  /** drawArrays() calls made by the draw() attempted while the context was
+   *  lost. Must be 0: this is what makes the "paints nothing" half of AC7
+   *  falsifiable — see the counter's own comment. */
+  drawCallsWhileLost: number;
   before: number[];
   after: number[];
   width: number;
@@ -301,6 +323,7 @@ async function loseAndRestore(spec: SceneSpec): Promise<LossResult> {
       return {
         supported: false,
         threwWhileLost: false,
+        drawCallsWhileLost: 0,
         before,
         after: before,
         width: spec.width,
@@ -310,12 +333,14 @@ async function loseAndRestore(spec: SceneSpec): Promise<LossResult> {
     const lost = eventOrTimeout(canvas, 'webglcontextlost');
     ext.loseContext();
     await lost;
+    const drawsBeforeAttempt = drawArraysCount;
     let threwWhileLost = false;
     try {
       renderer.draw(scene);
     } catch {
       threwWhileLost = true;
     }
+    const drawCallsWhileLost = drawArraysCount - drawsBeforeAttempt;
     // Yield a whole TASK before asking for the restore. `await lost` resumes in
     // a microtask, and a microtask checkpoint runs as soon as the listener that
     // resolved it returns — i.e. still inside the browser's dispatch of
@@ -335,7 +360,15 @@ async function loseAndRestore(spec: SceneSpec): Promise<LossResult> {
     await restored;
     renderer.draw(scene);
     const after = await settle(canvas, spec.width, spec.height, () => renderer.draw(scene));
-    return { supported: true, threwWhileLost, before, after, width: spec.width, height: spec.height };
+    return {
+      supported: true,
+      threwWhileLost,
+      drawCallsWhileLost,
+      before,
+      after,
+      width: spec.width,
+      height: spec.height,
+    };
   } finally {
     renderer.dispose();
     canvas.remove();

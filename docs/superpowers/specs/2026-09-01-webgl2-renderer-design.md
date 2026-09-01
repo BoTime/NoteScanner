@@ -127,13 +127,31 @@ already has, at the cost of a `readPixels` stall on every click.
   `prevSelected` — double-subtracting would underflow the counts.
 - `dispose()` deletes every texture, framebuffer, program and buffer, and is
   idempotent.
-- A failed `getContext`, shader compile, program link, or framebuffer
-  completeness check makes the renderer report itself unusable so the factory
-  hands back `canvas2d`.
+- `createDefaultRenderer()`'s pre-flight probe (`probeWebGL2Support()`) links
+  every program the renderer uses on a throwaway 1x1 canvas; a failed
+  `getContext`, or any of those five programs failing to compile or link, or a
+  failed framebuffer completeness check, makes the probe answer `false`, and
+  the factory hands back `canvas2d`. That is the only failure check that
+  changes the factory's answer. A failure inside an **already-selected live
+  instance** — the same checks, but after WebGL2 won — only marks that
+  instance unusable; `paint()` becomes a permanent no-op for it, and nothing
+  falls back to canvas2d mid-session. This is a deliberate scope limit, not an
+  oversight: swapping backends mid-session is its own failure mode (which
+  canvas gets the 2d context, what happens to the accumulated GPU state) that
+  this run does not implement or test.
 - `webglcontextlost` makes `draw()` a no-op until `webglcontextrestored`, which
   rebuilds programs and textures and repaints from the next scene.
 - `draw()` before `init()` resolves a context must be a no-op, not a throw — the
   existing interface contract.
+- Each renderer instance holds one live WebGL2 context for its lifetime, and
+  `createDefaultRenderer()` creates and discards one more during its probe.
+  Browsers cap the number of live contexts (Chrome enforces roughly 16) and
+  evict the oldest on overflow, firing `webglcontextlost` on a viewer that is
+  still on screen; nothing in this renderer calls `restoreContext()` on that
+  path, so an evicted viewer stays blank until its scene next changes. This is
+  a ceiling `canvas2d` does not have, and a consumer mounting many viewers at
+  once should pass `renderer={createCanvas2DRenderer}` explicitly rather than
+  rely on the default.
 
 ## Testing
 

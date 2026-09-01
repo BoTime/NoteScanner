@@ -297,15 +297,30 @@ function linkProgram(gl: Gl, vertSrc: string, fragSrc: string): WebGLProgram | n
   return prog;
 }
 
-function makeTexture(gl: Gl): WebGLTexture | null {
+/**
+ * `filter` is NOT a free knob — which textures may be LINEAR is decided by what
+ * is stored in them.
+ *
+ * NEAREST is mandatory for every COVERAGE texture: the scratch upload, the
+ * count/edge targets and the hover targets. The mask -> image-resolution step
+ * is the F4 upsample, and a LINEAR filter there yields FRACTIONAL coverage,
+ * which corrupts the exact one-ULP count arithmetic the R8 targets rely on (a
+ * half-lit texel is not "half a mask"; it is a wrong count).
+ *
+ * The base PHOTO has no such constraint: it is colour, not a count, and it is
+ * magnified by `paint()` sizing the drawing buffer to `imageWidth * dpr` while
+ * the texture stays `imageWidth` wide. NEAREST there is hard pixel replication
+ * where canvas2d's `drawImage` interpolates, worst at fractional dpr
+ * (1.25 / 1.5). So `baseTex` is the one LINEAR texture here. At dpr 1 every
+ * sample lands on a texel centre and LINEAR returns exactly the NEAREST value,
+ * which is why the dpr-1 AC3 differential is unmoved by this.
+ */
+function makeTexture(gl: Gl, filter: number = gl.NEAREST): WebGLTexture | null {
   const tex = gl.createTexture();
   if (!tex) return null;
   gl.bindTexture(gl.TEXTURE_2D, tex);
-  // NEAREST everywhere. The mask -> image-resolution step IS the F4 upsample,
-  // and a LINEAR filter there would yield fractional coverage, which would
-  // break the exact one-ULP count arithmetic the R8 targets rely on.
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   return tex;
@@ -335,6 +350,18 @@ function makeTarget(gl: Gl, width: number, height: number): Target | null {
 }
 
 /**
+ * Every (vertex, fragment) pair `createWebGL2Renderer` links, in one list so
+ * the probe and `buildPrograms()` cannot drift apart.
+ */
+const PROGRAM_SOURCES: readonly (readonly [string, string])[] = [
+  [VERT_QUAD, FRAG_MASK],
+  [VERT_QUAD, FRAG_EDGE],
+  [VERT_QUAD, FRAG_DILATE],
+  [VERT_QUAD, FRAG_COMPOSITE],
+  [VERT_DRAFT, FRAG_DRAFT],
+];
+
+/**
  * Does this browser actually give us a usable WebGL2 renderer, right now?
  *
  * A browser can expose `WebGL2RenderingContext` and still refuse a context
@@ -342,6 +369,12 @@ function makeTarget(gl: Gl, width: number, height: number): Target | null {
  * then fails to compile, link, or produce a complete R8 framebuffer. So the
  * probe does all four on a 1x1 throwaway canvas and drops the context again.
  * `createDefaultRenderer()` is the only caller.
+ *
+ * It links ALL FIVE programs, not just the composite one. This is the only
+ * failure check that changes the factory's answer — a failure inside an
+ * already-selected live instance just makes `paint()` a no-op (see the note on
+ * `failed`) — so a driver that compiles the composite shader but rejects, say,
+ * the dilation loop must be caught HERE or the viewer paints nothing at all.
  */
 export function probeWebGL2Support(): boolean {
   if (typeof document === 'undefined') return false;
@@ -351,15 +384,17 @@ export function probeWebGL2Support(): boolean {
     probe.height = 1;
     const gl = probe.getContext('webgl2', CONTEXT_ATTRS) as Gl | null;
     if (!gl) return false;
-    const prog = linkProgram(gl, VERT_QUAD, FRAG_COMPOSITE);
-    const target = prog ? makeTarget(gl, 1, 1) : null;
-    if (prog) gl.deleteProgram(prog);
+    const progs: (WebGLProgram | null)[] = [];
+    for (const [vert, frag] of PROGRAM_SOURCES) progs.push(linkProgram(gl, vert, frag));
+    const linked = progs.every(Boolean);
+    const target = linked ? makeTarget(gl, 1, 1) : null;
+    for (const p of progs) if (p) gl.deleteProgram(p);
     if (target) {
       gl.deleteFramebuffer(target.fbo);
       gl.deleteTexture(target.tex);
     }
     gl.getExtension('WEBGL_lose_context')?.loseContext();
-    return Boolean(prog && target);
+    return Boolean(linked && target);
   } catch {
     // jsdom throws outright from getContext when the `canvas` package is
     // absent, which is exactly the "no WebGL2 here" answer we want.
@@ -425,11 +460,11 @@ export function createWebGL2Renderer(): Renderer {
 
   function buildPrograms(): boolean {
     const g = gl!;
-    progMask = linkProgram(g, VERT_QUAD, FRAG_MASK);
-    progEdge = linkProgram(g, VERT_QUAD, FRAG_EDGE);
-    progDilate = linkProgram(g, VERT_QUAD, FRAG_DILATE);
-    progComposite = linkProgram(g, VERT_QUAD, FRAG_COMPOSITE);
-    progDraft = linkProgram(g, VERT_DRAFT, FRAG_DRAFT);
+    // Positional, from the same list the probe links, so the probe cannot end
+    // up validating a different set of shaders than the renderer builds.
+    [progMask, progEdge, progDilate, progComposite, progDraft] = PROGRAM_SOURCES.map(
+      ([vert, frag]) => linkProgram(g, vert, frag),
+    );
     quadVao = g.createVertexArray();
     draftVao = g.createVertexArray();
     draftBuf = g.createBuffer();
@@ -454,6 +489,15 @@ export function createWebGL2Renderer(): Renderer {
     bright = outline = edgeA = edgeB = hoverBright = hoverOutline = null;
   }
 
+  /**
+   * `edgeA` / `edgeB` are the dilation ping-pong pair and are live only inside
+   * `runOutlinePasses`, yet they are allocated here and held for the renderer's
+   * lifetime — two full-resolution R8 targets, ~24 MB on a 12 MP image. That is
+   * a deliberate residency-vs-allocation-churn trade: a selection toggle runs
+   * these passes once per added or removed mask, and allocating a pair of
+   * image-sized targets per toggle would put that churn on the frame that has
+   * to stay responsive.
+   */
   function ensureTargets(width: number, height: number): boolean {
     if (bright && texWidth === width && texHeight === height) return true;
     destroyTargets();
@@ -481,7 +525,9 @@ export function createWebGL2Renderer(): Renderer {
   function ensureBase(scene: Scene): void {
     const g = gl!;
     if (baseTex && baseSource === scene.base) return;
-    if (!baseTex) baseTex = makeTexture(g);
+    // LINEAR, unlike every other texture here — see makeTexture(). The base is
+    // colour magnified to `imageWidth * dpr`, not coverage feeding a count.
+    if (!baseTex) baseTex = makeTexture(g, g.LINEAR);
     if (!baseTex) {
       failed = true;
       return;
@@ -686,8 +732,14 @@ export function createWebGL2Renderer(): Renderer {
   function paint(scene: Scene): void {
     if (!canvas || !gl || failed || contextLost) return;
     const { imageWidth: w, imageHeight: h, devicePixelRatio: dpr } = scene;
-    canvas.width = Math.floor(w * dpr);
-    canvas.height = Math.floor(h * dpr);
+    // Assigning canvas.width/height reallocates and clears the drawing buffer
+    // even when the value is unchanged, and SegmentViewer paints on every
+    // hover. Skipping the no-op assignment is safe because composite() clears
+    // the default framebuffer itself before every frame.
+    const nextW = Math.floor(w * dpr);
+    const nextH = Math.floor(h * dpr);
+    if (canvas.width !== nextW) canvas.width = nextW;
+    if (canvas.height !== nextH) canvas.height = nextH;
     if (!ensureTargets(w, h)) return;
     ensureBase(scene);
     if (failed) return;
@@ -722,11 +774,54 @@ export function createWebGL2Renderer(): Renderer {
     failed = !buildPrograms();
   };
 
+  /**
+   * Full GL teardown for whichever canvas `canvas` currently points at.
+   * Shared by `dispose()` and by `init()`'s different-canvas path: `Renderer`
+   * is public API and nothing stops a caller from calling `init()` again with
+   * a second canvas on the same instance. Without this, the first canvas's
+   * context, every program/texture/VAO/buffer built for it, and its
+   * context-loss listeners would leak — nothing else ever tears them down.
+   */
+  function teardownGl(): void {
+    const g = gl;
+    if (canvas) {
+      canvas.removeEventListener('webglcontextlost', onContextLost);
+      canvas.removeEventListener('webglcontextrestored', onContextRestored);
+    }
+    if (g) {
+      destroyTargets();
+      if (scratchTex) g.deleteTexture(scratchTex);
+      if (baseTex) g.deleteTexture(baseTex);
+      for (const p of [progMask, progEdge, progDilate, progComposite, progDraft]) {
+        if (p) g.deleteProgram(p);
+      }
+      if (quadVao) g.deleteVertexArray(quadVao);
+      if (draftVao) g.deleteVertexArray(draftVao);
+      if (draftBuf) g.deleteBuffer(draftBuf);
+    }
+    uniforms.clear();
+    progMask = progEdge = progDilate = progComposite = progDraft = null;
+    quadVao = draftVao = null;
+    draftBuf = null;
+    scratchTex = null;
+    baseTex = null;
+    baseSource = null;
+    texWidth = texHeight = 0;
+    prevSelected = new Set();
+    appliedMasks.clear();
+    hoverKey = '';
+    failed = false;
+    contextLost = false;
+    gl = null;
+  }
+
   return {
     init(next) {
-      // SegmentViewer calls init() before every draw, so this must be cheap and
-      // must not re-register the context-loss listeners.
+      // SegmentViewer calls init() before every draw, so the common case (same
+      // canvas, already bound) must be cheap and must not re-register the
+      // context-loss listeners.
       if (canvas === next && (gl || failed)) return;
+      if (canvas && canvas !== next && (gl || failed)) teardownGl();
       canvas = next;
       failed = false;
       contextLost = false;
@@ -746,36 +841,7 @@ export function createWebGL2Renderer(): Renderer {
       paint(scene);
     },
     dispose() {
-      const g = gl;
-      if (canvas) {
-        canvas.removeEventListener('webglcontextlost', onContextLost);
-        canvas.removeEventListener('webglcontextrestored', onContextRestored);
-      }
-      if (g) {
-        destroyTargets();
-        if (scratchTex) g.deleteTexture(scratchTex);
-        if (baseTex) g.deleteTexture(baseTex);
-        for (const p of [progMask, progEdge, progDilate, progComposite, progDraft]) {
-          if (p) g.deleteProgram(p);
-        }
-        if (quadVao) g.deleteVertexArray(quadVao);
-        if (draftVao) g.deleteVertexArray(draftVao);
-        if (draftBuf) g.deleteBuffer(draftBuf);
-      }
-      uniforms.clear();
-      progMask = progEdge = progDilate = progComposite = progDraft = null;
-      quadVao = draftVao = null;
-      draftBuf = null;
-      scratchTex = null;
-      baseTex = null;
-      baseSource = null;
-      texWidth = texHeight = 0;
-      prevSelected = new Set();
-      appliedMasks.clear();
-      hoverKey = '';
-      failed = false;
-      contextLost = false;
-      gl = null;
+      teardownGl();
       canvas = null;
     },
     /**
