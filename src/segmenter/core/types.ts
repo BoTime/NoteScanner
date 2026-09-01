@@ -113,11 +113,22 @@ export interface SegmenterOptions {
  * note). `dtype: 'fp32'` is the safe default — fp16 outputs come back as raw
  * float16 bits on runtimes without `Float16Array`, and while the worker
  * converts them with `tensor.to('float32')`, fp32 removes the variable when
- * the first goal is a trustworthy timing table.
+ * the first goal is a trustworthy timing table. It is also not purely a speed
+ * knob: fp16 changes the kept-mask COUNT, and in both directions — 26 → 28 in
+ * issue #12's run, 36 → 31 in the decode sweep's. That makes adopting it a
+ * product decision, which is why the faster dtype is still not the default.
+ *
+ * `batchSize: 32` IS the default, on two independent measurements: issue #12
+ * (−11.8% on `decode` at 16 points per side) and
+ * `docs/measurements/2026-08-28-decode-sweep.md` (−4.4% on the whole budget,
+ * fp32, same density). Both also rule out going further: `batchSize: 64` dies
+ * with `Array buffer allocation failed`, because the upsample allocates
+ * `batch × width × height × 4` bytes at once. 32 is bounded above by memory,
+ * not by diminishing returns.
  */
 export const DEFAULT_SEGMENTER_OPTIONS: SegmenterOptions = {
   pointsPerSide: 16,
-  batchSize: 8,
+  batchSize: 32,
   maskThreshold: 0,
   stabilityScoreThreshold: 0.85,
   stabilityScoreOffset: 1,

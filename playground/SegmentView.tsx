@@ -12,9 +12,11 @@ import {
   type SegmenterProgress,
 } from '../src/segmenter';
 import sampleUrl from './sample/cafe-table.jpg';
-
-/** The one axis prior probes showed actually moves everything-mode cost. */
-const POINTS_PER_SIDE_CHOICES = [16, 32] as const;
+import {
+  BATCH_SIZE_CHOICES,
+  DTYPE_CHOICES,
+  POINTS_PER_SIDE_CHOICES,
+} from './option-choices';
 
 interface LoadedImage {
   url: string;
@@ -132,6 +134,32 @@ export function SegmentView() {
           >
             {POINTS_PER_SIDE_CHOICES.map((n) => (
               <option key={n} value={n}>{n}</option>
+            ))}
+          </select>
+        </label>{' '}
+        <label>
+          dtype:{' '}
+          <select
+            data-testid="segment-dtype"
+            value={options.dtype}
+            disabled={running}
+            onChange={(e) => patch({ dtype: e.target.value as SegmenterOptions['dtype'] })}
+          >
+            {DTYPE_CHOICES.map((value) => (
+              <option key={value} value={value}>{value}</option>
+            ))}
+          </select>
+        </label>{' '}
+        <label>
+          batch size:{' '}
+          <select
+            data-testid="segment-batch-size"
+            value={options.batchSize}
+            disabled={running}
+            onChange={(e) => patch({ batchSize: Number(e.target.value) })}
+          >
+            {BATCH_SIZE_CHOICES.map((value) => (
+              <option key={value} value={value}>{value}</option>
             ))}
           </select>
         </label>{' '}
