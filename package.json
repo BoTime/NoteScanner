@@ -1,5 +1,5 @@
 {
-  "name": "note-scanner",
+  "name": "@botime/note-scanner",
   "version": "0.1.0",
   "description": "In-browser post-it note scanner: a React segment/mask viewer with an optional WebGPU SAM segmenter",
   "license": "MIT",
@@ -53,7 +53,8 @@
     "./package.json": "./package.json"
   },
   "publishConfig": {
-    "access": "public",
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted",
     "exports": {
       ".": {
         "types": "./dist/index.d.ts",
