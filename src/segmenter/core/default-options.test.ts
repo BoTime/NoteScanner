@@ -22,10 +22,11 @@ describe('DEFAULT_SEGMENTER_OPTIONS inference knobs', () => {
     expect(DEFAULT_SEGMENTER_OPTIONS.batchSize).toBeLessThan(64);
   });
 
-  it('keeps fp32, because fp16 changes what the segmenter detects', () => {
-    // fp16 is faster but moved the kept-mask count in BOTH directions across
-    // two runs (26 -> 28, and 36 -> 31). Adopting it is a product decision.
-    expect(DEFAULT_SEGMENTER_OPTIONS.dtype).toBe('fp32');
+  it('defaults to fp16, the faster weights', () => {
+    // The product decision to take fp16's speed was made knowing it moves the
+    // kept-mask count in BOTH directions across two runs (26 -> 28, 36 -> 31).
+    // Reproducing the fp32 measurement tables now needs an explicit dtype.
+    expect(DEFAULT_SEGMENTER_OPTIONS.dtype).toBe('fp16');
   });
 
   it('leaves both measured-no-op decode paths off', () => {
