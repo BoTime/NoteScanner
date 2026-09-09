@@ -39,7 +39,39 @@ actually execute (1/1, 5/5, 2/2). So the other half of this rule matters: this r
 plan coverage table left AC2's running-app half — clicking edges and a thin structure
 on the Segment tab with the flag on and off — to a person with a real WebGPU adapter.
 A criterion parked on a hand run is a criterion with no evidence. Put a real
-end-to-end invocation in an early task and budget for it.
+end-to-end invocation in an early task and budget for it. This run shows the failure
+mode the rule does not yet name: plan-dictated *assertions* are unrun too, and they
+fail silently rather than loudly. The AC6 spec clicked the viewer canvas and asserted
+nothing about the result, under a test named "…and selects a segment" — it would have
+passed with selection entirely dead. It also assumed the wrong interaction: selecting
+is two steps, a canvas click opens a `role="menu"` of the masks under the cursor and
+its `Select` item commits. Writing the real assertion is what surfaced that. **Any
+step that performs an action and asserts nothing about its effect is not coverage.**
+Before dictating an assertion about an interaction, confirm the interaction exists in
+the component being driven, not in the plan's mental model of it.
+
+**A guard is worth exactly the breaches it can detect — prove that, don't assume it.**
+The AC8 test forbidding imports across the `site/` ↔ `playground/` boundary passed
+while missing side-effect imports (`import '../playground/x.css'` carries no `from`)
+and `new Worker(new URL('../playground/w.ts', import.meta.url))` — the two idioms this
+repo itself uses, and so the realistic ways the boundary would actually break. It also
+scanned only `.ts/.tsx/.html`, and recursed into `site/dist`. A vacuity check that the
+file list is non-empty is necessary and was present; it is not sufficient, because it
+proves the loop ran, not that the pattern matches anything real. Pair every guard with
+cases that feed it each breach form and assert it catches them. The same applies to
+cross-engine assertions: an AC5 button count hardcoded at 3 failed in webkit, which
+correctly renders no Run button because it exposes no `navigator.gpu` — an
+engine-dependent value must be derived from the engine, and the fix is to derive it
+while keeping the assertion strict, never to relax it.
+
+**Disable every path to a state change, not the obvious ones.** The public page
+disabled its sample chips and file input while a run was in flight, but the drop
+target on the same panel was not gated by either — so a photo dropped mid-run got the
+previous photo's masks and stat line painted over it. Wrong output that looks
+plausible is worse than an error. When a control is disabled for a reason, enumerate
+the other routes to the same state (a drop handler, a keyboard path, a deep link) and
+gate them at the one place they converge; then have the async work verify on
+completion that the state it was computed for is still current.
 
 **Pin the branch to what it will merge into.** A worktree stayed at merge base
 `3cccb78` while `main` advanced to `3fe5e56`, which rewrote `DEFAULT_SEGMENTER_OPTIONS`
@@ -192,6 +224,28 @@ the previous one were all tests that passed for reasons unrelated to the propert
 under test.
 
 ## Recent runs
+
+**issue-11-create-a-public-github-page-as-a-playgro** (2026-09-08) — a public "Try it"
+page at `botime.github.io/NoteScanner/`, built from a new `site/` entry, plus a shared
+top-level `samples/` and a Pages workflow. Tier standard, 3 tasks, 0 parked, 1 fix
+round. Verify ran: 5/5 `(ui)` criteria in chromium, webkit and firefox against the
+production build under its real base path, and AC6 end to end on a real adapter (34
+segments · 14.7 s, matching the `pps 16` mask count in the decode sweep). Four majors,
+all found by a whole-branch review rather than by the gates, and all sitting under
+green checks: a vacuous AC6 assertion; an import guard blind to the two import idioms
+the repo uses; a mid-run drop painting stale results onto a new photo; and an
+undecodable dropped file throwing uncaught with no user-visible feedback and a leaked
+object URL. Minor: a hardcoded cross-engine button count that webkit correctly
+contradicts. **The process finding matters more than any of them.** Two dispatched
+stage agents were terminated by the runtime mid-run, both reported as "stopped by
+user" with no interrupt record anywhere and no error in their own transcripts; the
+kill notifications landed on an exact 30-second grid, at identical sub-second phase,
+870.000s apart. Task 2 therefore landed with no review at all and Task 3 was written
+by the orchestrator, so the per-task review gate — the thing that would normally have
+caught those four defects — silently did not happen for two thirds of the branch. A
+stage that cannot report its own non-completion is worse than one that parks: the run
+looked finished. Treat a missing per-task review as a blocking condition and run a
+whole-branch review before landing whenever one is missing.
 
 **issue-7-6-8-m2-encode-masks-at-256x256** (2026-09-01) — encode each survivor's PNG
 at the decoder's own logit window (256x162 for a 1024x649 photo) behind
