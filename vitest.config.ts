@@ -8,6 +8,8 @@ export default defineConfig({
       'src/**/*.test.tsx',
       'playground/**/*.test.ts',
       'playground/**/*.test.tsx',
+      'site/**/*.test.ts',
+      'site/**/*.test.tsx',
     ],
   },
 });

@@ -30,7 +30,7 @@ import {
   type RowOptions,
   type RunRecord,
 } from './compare';
-import sampleUrl from './sample/cafe-table.jpg';
+import sampleUrl from '../samples/cafe-table.jpg';
 
 import {
   BATCH_SIZE_CHOICES,

@@ -68,11 +68,16 @@ default.
 
 ```bash
 npm install
-npm run playground   # Vite dev app
+npm run playground   # Vite dev app (all four tabs)
+npm run site         # the public Try-it page, the app deployed to GitHub Pages
 npm run test
 npm run typecheck
 npm run smoke        # build + artifact check
 ```
+
+The public page is deployed from `site/` to
+<https://botime.github.io/NoteScanner/> by `.github/workflows/pages.yml` on
+every push to `main`.
 
 ## `note-scanner/segmenter` (optional, prototype)
 
