@@ -171,13 +171,17 @@ export interface SegmenterOptions {
  * `Xenova/slimsam-77-uniform` is the tiny distilled SAM that transformers.js
  * actually ships ONNX weights + a processor config for; no MobileSAM export on
  * the Hub is loadable by `SamModel`/`AutoProcessor` (see the plan's deviation
- * note). `dtype: 'fp32'` is the safe default — fp16 outputs come back as raw
- * float16 bits on runtimes without `Float16Array`, and while the worker
- * converts them with `tensor.to('float32')`, fp32 removes the variable when
- * the first goal is a trustworthy timing table. It is also not purely a speed
- * knob: fp16 changes the kept-mask COUNT, and in both directions — 26 → 28 in
- * issue #12's run, 36 → 31 in the decode sweep's. That makes adopting it a
- * product decision, which is why the faster dtype is still not the default.
+ * note). `dtype: 'fp16'` is the default: it is the faster weights on every
+ * measurement we have taken, and the product decision to accept its output
+ * difference has been made. That difference is real and is NOT a rounding
+ * artifact — fp16 moves the kept-mask COUNT, in both directions: 26 → 28 in
+ * issue #12's run, 36 → 31 in the decode sweep's. Callers who need the
+ * mask set to be reproducible against the fp32 measurement tables (see
+ * `docs/measurements/`) must pass `dtype: 'fp32'` explicitly.
+ *
+ * The one runtime caveat: fp16 outputs come back as raw float16 bits on
+ * runtimes without `Float16Array`. The worker already converts them with
+ * `tensor.to('float32')`, so this is handled rather than avoided.
  *
  * `batchSize: 32` IS the default, on two independent measurements: issue #12
  * (−11.8% on `decode` at 16 points per side) and
@@ -196,7 +200,7 @@ export const DEFAULT_SEGMENTER_OPTIONS: SegmenterOptions = {
   minMaskArea: 100,
   nmsIouThreshold: 0.7,
   modelId: 'Xenova/slimsam-77-uniform',
-  dtype: 'fp32',
+  dtype: 'fp16',
   compareNms: false,
   overlapDecodeFilter: false,
   gpuResidentEmbeddings: false,

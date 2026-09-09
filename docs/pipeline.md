@@ -177,8 +177,9 @@ than this section originally claimed and does not extend upward: **64 is
 unusable**, dying with `Array buffer allocation failed`, and 32 is bounded above
 by memory rather than by diminishing returns
 (`docs/measurements/2026-08-28-decode-sweep.md`, and issue #12). fp16 helps here
-too, but it also changes the kept-mask count in both directions, so it stays a
-product decision rather than a default. This stage stays the floor, and that is
+too and is now also the default; it changes the kept-mask count in both
+directions, so the measurement tables below, which were taken at fp32, need an
+explicit `dtype: 'fp32'` to reproduce. This stage stays the floor, and that is
 the intended end state: model inference should be the bottleneck.
 
 **`filter` — stops upsampling.** The candidate mask stays at 256×256 throughout.
@@ -315,7 +316,7 @@ The plan is tracked as eight issues, numbered in implementation order.
 | Issue | Wave | Changes | Status |
 |---|:---:|---|---|
 | [#2](https://github.com/BoTime/NoteScanner/issues/2) | 0 | sub-timers inside `filter` | landed |
-| [#3](https://github.com/BoTime/NoteScanner/issues/3) | 1 | E1 + D1 — fp16, larger `batchSize` | measured; adoption tracked in [#12](https://github.com/BoTime/NoteScanner/issues/12) |
+| [#3](https://github.com/BoTime/NoteScanner/issues/3) | 1 | E1 + D1 — fp16, larger `batchSize` | landed; both are defaults (measured in [#12](https://github.com/BoTime/NoteScanner/issues/12)) |
 | [#4](https://github.com/BoTime/NoteScanner/issues/4) | 1 | N2 + N3 — bbox prefilter, bit-packed NMS | landed |
 | [#5](https://github.com/BoTime/NoteScanner/issues/5) | 1 | M3 + M4 — 1-bit PNG, in the worker | landed |
 | [#6](https://github.com/BoTime/NoteScanner/issues/6) | 2 | F1 + N1 + F3 — carry 256² through | landed |
