@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Try note-scanner</title>
+    <!-- The browser requests /favicon.ico at the ORIGIN root on its own, which
+         under base '/NoteScanner/' is a path this site does not serve — a 404
+         that AC1's "no failed asset requests" assertion would (correctly) catch.
+         This declares the icon instead of leaving it to that guess. Removing
+         the request is the fix; filtering it out of the assertion is not. -->
+    <link rel="icon" href="data:," />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>
