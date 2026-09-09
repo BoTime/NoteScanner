@@ -1,6 +1,6 @@
 {
-  "name": "note-scanner",
-  "version": "0.1.0",
+  "name": "@botime/note-scanner",
+  "version": "0.1.1",
   "description": "In-browser post-it note scanner: a React segment/mask viewer with an optional WebGPU SAM segmenter",
   "license": "MIT",
   "author": "BoTime",
@@ -49,11 +49,17 @@
       "import": "./dist/segmenter/index.js",
       "require": "./dist/segmenter/index.cjs"
     },
+    "./segmenter/worker": {
+      "types": "./dist/segmenter/worker.d.ts",
+      "development": "./src/segmenter/worker/segmenter.worker.ts",
+      "import": "./dist/segmenter/worker.js"
+    },
     "./styles.css": "./src/styles.css",
     "./package.json": "./package.json"
   },
   "publishConfig": {
-    "access": "public",
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted",
     "exports": {
       ".": {
         "types": "./dist/index.d.ts",
@@ -69,6 +75,10 @@
         "types": "./dist/segmenter/index.d.ts",
         "import": "./dist/segmenter/index.js",
         "require": "./dist/segmenter/index.cjs"
+      },
+      "./segmenter/worker": {
+        "types": "./dist/segmenter/worker.d.ts",
+        "import": "./dist/segmenter/worker.js"
       },
       "./styles.css": "./dist/segment-viewer.css",
       "./package.json": "./package.json"

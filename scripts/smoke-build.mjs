@@ -22,6 +22,7 @@ const required = [
   'dist/segmenter/index.js',
   'dist/segmenter/index.cjs',
   'dist/segmenter/index.d.ts',
+  'dist/segmenter/worker.js',
   'dist/segment-viewer.css',
 ];
 

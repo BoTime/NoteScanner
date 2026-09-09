@@ -5,6 +5,7 @@ export default defineConfig({
     index: 'src/index.ts',
     'core/index': 'src/core/index.ts',
     'segmenter/index': 'src/segmenter/index.ts',
+    'segmenter/worker': 'src/segmenter/worker/segmenter.worker.ts',
   },
   format: ['esm', 'cjs'],
   dts: true,
