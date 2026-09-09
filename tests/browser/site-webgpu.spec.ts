@@ -65,13 +65,42 @@ test.describe('a real segmentation on a real adapter (AC6)', () => {
       'progress lines seen: ' + seen,
     ).toBe(true);
 
-    // Click-to-select works on real output: click the middle of the viewer.
+    // Click-to-select works on real output. Clicking and asserting nothing
+    // would pass just as well with click-to-select dead, so this reads the
+    // selection count the page exposes and requires it to actually rise.
+    const shown = page.getByTestId('site-image');
+    expect(await shown.getAttribute('data-selected')).toBe('0');
+
     const canvas = page.locator('canvas').first();
     const box = await canvas.boundingBox();
     // Thrown, not asserted: a null box must stop the test here, and `expect`
-    // alone would leave `box` typed `null` for the click below.
+    // alone would leave `box` typed `null` for the clicks below.
     if (!box) throw new Error('the viewer canvas has no layout box');
-    await canvas.click({ position: { x: box.width / 2, y: box.height / 2 } });
+
+    // Selecting is two steps, not one: a canvas click hit-tests the masks and
+    // opens a role="menu" of what is under the cursor, and the "Select" item
+    // in it is what actually changes the selection. A test that only clicked
+    // the canvas would pass with selection entirely broken.
+    const menu = page.getByRole('menu');
+    // Several points, because any single one may land on background rather
+    // than on a mask — that would be a flaky test, not a real failure.
+    const spots = [0.5, 0.35, 0.65].flatMap((x) => [0.5, 0.35, 0.65].map((y) => ({ x, y })));
+    let opened = false;
+    for (const spot of spots) {
+      await canvas.click({ position: { x: box.width * spot.x, y: box.height * spot.y } });
+      if (await menu.isVisible().catch(() => false)) {
+        opened = true;
+        break;
+      }
+    }
+    expect(opened, 'no click anywhere on the viewer hit a mask').toBe(true);
+
+    await menu.getByRole('menuitem', { name: /- Select$/ }).first().click();
+
+    expect(
+      Number(await shown.getAttribute('data-selected')),
+      'the Select menu item did not change the selection',
+    ).toBeGreaterThan(0);
 
     // Printed, not just asserted: this is the AC6 evidence the run records.
     console.log('progress lines:', seen);

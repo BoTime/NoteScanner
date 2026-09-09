@@ -119,6 +119,65 @@ describe('TryItPage image sources (AC3)', () => {
   });
 });
 
+describe('TryItPage handles images a stranger might actually drop', () => {
+  it('reports an undecodable file instead of throwing, and revokes its url', async () => {
+    await renderWithSample();
+    const revoked: string[] = [];
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: (url: string) => revoked.push(url),
+    });
+    // decode() rejects for anything that is not really an image. accept=
+    // "image/*" does not constrain a DROP at all, so this is reachable.
+    Object.defineProperty(HTMLImageElement.prototype, 'decode', {
+      configurable: true,
+      value: () => Promise.reject(new Error('The source image cannot be decoded.')),
+    });
+
+    const file = new File(['not an image'], 'notes.txt', { type: 'text/plain' });
+    fireEvent.drop(screen.getByTestId('site-controls'), { dataTransfer: { files: [file] } });
+
+    const error = await screen.findByTestId('run-error');
+    expect(error.textContent).toBe('Failed during image: That file could not be read as an image.');
+    // The url never reached replaceImage, so only this path can free it.
+    expect(revoked).toContain('blob:stub');
+    // And the image on screen is untouched.
+    expect(screen.getByTestId('site-image').getAttribute('data-src')).not.toBe('blob:stub');
+  });
+
+  it('ignores a file dropped mid-run, so no result lands on the wrong image', async () => {
+    let finishRun: (outcome: unknown) => void = () => {};
+    segment.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishRun = resolve;
+        }),
+    );
+    await renderWithSample();
+
+    fireEvent.click(screen.getByTestId('run-segmentation'));
+    await screen.findByTestId('run-progress');
+
+    // A drop is the one image-change path that is not already `disabled`
+    // during a run, the way the chips and the file input are.
+    const before = screen.getByTestId('site-image').getAttribute('data-src');
+    const file = new File(['x'], 'other.png', { type: 'image/png' });
+    fireEvent.drop(screen.getByTestId('site-controls'), { dataTransfer: { files: [file] } });
+
+    // Ignored while running — consistent with every other control — so the
+    // result cannot land on a photo it was not computed from.
+    await waitFor(() =>
+      expect(screen.getByTestId('site-image').getAttribute('data-src')).toBe(before),
+    );
+
+    finishRun({ segments: [{ id: 'a' }, { id: 'b' }], timings: { totalMs: 7067 }, counts: {} });
+
+    // The run it belongs to still completes normally.
+    const stats = await screen.findByTestId('run-stats');
+    expect(stats.textContent).toBe('2 segments · 7.1 s');
+  });
+});
+
 describe('TryItPage pins the package defaults (AC10)', () => {
   it('passes DEFAULT_SEGMENTER_OPTIONS through unmodified', async () => {
     segment.mockResolvedValueOnce({ segments: [], timings: { totalMs: 1 }, counts: {} });

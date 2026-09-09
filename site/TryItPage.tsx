@@ -48,6 +48,16 @@ export function TryItPage() {
   const [error, setError] = useState<{ phase: string; message: string } | null>(null);
   const segmenterRef = useRef<ReturnType<typeof createSegmenter> | null>(null);
   const objectUrlRef = useRef<string | null>(null);
+  // Bumped every time the displayed image changes. `run()` captures it and
+  // discards its own result if the image moved on meanwhile — otherwise a
+  // photo swapped mid-run gets the previous photo's masks painted over it,
+  // which reads as a plausible wrong answer rather than as an error.
+  //
+  // Defence in depth: `pickFile`/`pickSample` already refuse to swap the image
+  // while a run is in flight, so today nothing can bump this mid-run. It is
+  // kept because that refusal is the kind of thing a later change quietly
+  // relaxes, and the failure it prevents is silent rather than loud.
+  const imageGenRef = useRef(0);
 
   const replaceImage = useCallback((next: LoadedImage, nextSampleId: string | null) => {
     // Revoked here rather than inside a state updater: React re-invokes
@@ -56,6 +66,7 @@ export function TryItPage() {
       URL.revokeObjectURL(objectUrlRef.current);
     }
     objectUrlRef.current = next.objectUrl ? next.url : null;
+    imageGenRef.current += 1;
     setImage(next);
     setSampleId(nextSampleId);
     setSegments([]);
@@ -85,12 +96,26 @@ export function TryItPage() {
   );
 
   async function pickSample(sample: (typeof SAMPLES)[number]) {
+    if (running) return;
     replaceImage(await loadImage(sample.url, false), sample.id);
   }
 
   async function pickFile(file: File | undefined) {
-    if (!file) return;
-    replaceImage(await loadImage(URL.createObjectURL(file), true), null);
+    // The chips and the file input are `disabled` while a run is in flight,
+    // but a drop onto the panel is not gated by either — so the check lives
+    // here, where every path to a new image passes through.
+    if (!file || running) return;
+    const url = URL.createObjectURL(file);
+    try {
+      replaceImage(await loadImage(url, true), null);
+    } catch {
+      // decode() rejects for anything that is not a real image — a dropped
+      // .txt, a truncated jpeg. `accept="image/*"` does not constrain drops at
+      // all, so on a public page this is a normal thing for a stranger to do.
+      // The url never reached replaceImage, so nothing else would revoke it.
+      URL.revokeObjectURL(url);
+      setError({ phase: 'image', message: 'That file could not be read as an image.' });
+    }
   }
 
   async function run() {
@@ -102,6 +127,8 @@ export function TryItPage() {
     setSelected(new Set());
     setProgress(null);
 
+    // Captured before any await: everything below belongs to THIS image.
+    const gen = imageGenRef.current;
     try {
       const blob = await (await fetch(image.url)).blob();
       const bitmap = await createImageBitmap(blob);
@@ -112,9 +139,13 @@ export function TryItPage() {
         DEFAULT_SEGMENTER_OPTIONS,
         setProgress,
       );
+      if (imageGenRef.current !== gen) return;
       setSegments(outcome.segments);
       setResult(outcome);
     } catch (thrown) {
+      // A stale run's failure is not this image's failure either — reporting
+      // it would blame the new photo for the old one's error.
+      if (imageGenRef.current !== gen) return;
       const failure = thrown instanceof SegmenterFailure ? thrown : null;
       setError({
         phase: failure?.phase ?? 'unknown',
@@ -221,6 +252,11 @@ export function TryItPage() {
           data-src={image.url}
           data-width={image.width}
           data-height={image.height}
+          // Selection lives in React state and paints to a canvas, so it is
+          // otherwise invisible to a browser test. Surfacing the count is what
+          // lets the AC6 spec assert that click-to-select actually selected
+          // something, instead of clicking and asserting nothing.
+          data-selected={selected.size}
         >
           <SegmentViewer
             key={`${image.url}-${segments.length}`}

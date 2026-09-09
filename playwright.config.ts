@@ -4,13 +4,20 @@ import { SITE_URL } from './tests/browser/site-url';
 /**
  * Browser-only verification, in three engines.
  *
- * Two specs with different needs. `mask-png.spec.ts` encodes its masks in Node
- * and hands them into the page as data URLs, so it needs nothing served.
- * `boundary.spec.ts` drives the running playground, so a `webServer` starts
- * Vite for it — which also serves the first spec harmlessly. Neither needs
- * WebGPU, a model download or the network: firefox and webkit expose no
- * `navigator.gpu` at all, which is exactly why the Boundary tab must not ask
- * for one.
+ * Specs with three different needs, so `webServer` is an array.
+ * `mask-png.spec.ts` encodes its masks in Node and hands them into the page as
+ * data URLs, so it needs nothing served. `boundary.spec.ts` drives the running
+ * playground, so the first entry starts Vite for it. `site.spec.ts` drives the
+ * PRODUCTION build of the public page under its real `/NoteScanner/` base
+ * path, which the second entry serves — a dev server would hide exactly the
+ * base-path asset breakage that spec exists to catch.
+ *
+ * None of those need WebGPU, a model download or the network: firefox and
+ * webkit expose no `navigator.gpu` at all, which is why the Boundary tab must
+ * not ask for one and why the page must render its notice without one.
+ * `site-webgpu.spec.ts` is the exception and skips unless a real adapter is
+ * present — `npm run test:site:gpu` runs it headed and turns that skip into a
+ * failure.
  */
 export default defineConfig({
   testDir: './tests/browser',
