@@ -11,7 +11,7 @@ import {
   type SegmenterOptions,
   type SegmenterProgress,
 } from '../src/segmenter';
-import sampleUrl from './sample/cafe-table.jpg';
+import sampleUrl from '../samples/cafe-table.jpg';
 import {
   BATCH_SIZE_CHOICES,
   DTYPE_CHOICES,
